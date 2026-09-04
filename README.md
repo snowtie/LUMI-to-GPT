@@ -4,6 +4,8 @@
 
 비공식 커뮤니티 확장이며 STUDIO LUMI, LUMI Chat 제작자 또는 OpenAI의 공식 제품이 아닙니다.
 
+***TTS 음성 가중치를 제공해주신 분께 감사의 말씀을 올립니다.***
+
 ## 필요한 것
 
 - Little LUMI
