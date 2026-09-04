@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bridge-next"
+description = "Enables the bridge_next command without any pre-configured scope."
+commands.allow = ["bridge_next"]
+
+[[permission]]
+identifier = "deny-bridge-next"
+description = "Denies the bridge_next command without any pre-configured scope."
+commands.deny = ["bridge_next"]

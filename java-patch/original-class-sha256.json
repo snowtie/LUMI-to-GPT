@@ -1,0 +1,30 @@
+[
+  {
+    "entry": "com/group_finity/mascot/lumi/SpeechDirector.class",
+    "sha256": "40F6D94905E1A060D0C5CB4B9E9AF2285E1B94CF5D8DD713A9462AC707999ABF"
+  },
+  {
+    "entry": "com/group_finity/mascot/lumi/ai/AiSettings.class",
+    "sha256": "BB8EEB49207C7AF9B6F528E6CA4CFC5639DB0232304D5EDB877B3513632C7DC9"
+  },
+  {
+    "entry": "com/group_finity/mascot/lumi/ai/AiSettingsDialog.class",
+    "sha256": "6D166E4332AB215F4DB1080B953B6C13FEB87F33BAF36D2AB574FFF18003C212"
+  },
+  {
+    "entry": "com/group_finity/mascot/lumi/ai/AiSettingsDialog$Page.class",
+    "sha256": "A9526662CF742E07C54B9D7D03E94099102C55CD77503EBBA097C88F663A963B"
+  },
+  {
+    "entry": "com/group_finity/mascot/lumi/ai/AiSettingsDialog$TabShell.class",
+    "sha256": "0EC84C4C99EC913E80C490A8B56EC886AF1F0D3BC54CADC919D53CD7AF2A9CA0"
+  },
+  {
+    "entry": "com/group_finity/mascot/lumi/ai/TtsClient.class",
+    "sha256": "24CE67E3532EF741A96C50051640C0A09B5DC13EA2EA9E2A50E31FB1F1C5D0F9"
+  },
+  {
+    "entry": "com/group_finity/mascot/lumi/ai/TtsClient$Audio.class",
+    "sha256": "56706787710C7CCF44F5E4B48E00BFBE5D8C2E94079D31F0F0E038BD0A9ACDE7"
+  }
+]
