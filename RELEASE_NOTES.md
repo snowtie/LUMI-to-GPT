@@ -1,4 +1,4 @@
-# LUMI to GPT v0.8.3
+# LUMI to GPT v0.9.0
 
 ## 주요 기능
 
@@ -7,9 +7,15 @@
 - Little LUMI의 `루미 AI 설정`에 `GPT Web`과 `GPT-SoVITS` 추가
 - 로컬 GPT-SoVITS 자동 실행, 자동 절전·초절전, 집중 모드 즉시 무음
 - Codex 앱·CLI 작업 완료 알림용 Rust MCP 포함
-- 휴대용 설치기에서 `GPT 애드온만`과 `GPT 애드온 + 로컬 TTS` 선택 가능
+- 휴대용 설치기에서 `GPT 애드온만`과 `GPT 애드온 + LUMI TTS` 선택 가능
 
-## 이번 배포에서 확인한 수정
+## v0.9.0 변경 사항
+
+- `GPT 애드온 + LUMI TTS`를 고르면 허가된 LUMI 음성 가중치를 GitHub Release에서 자동 다운로드
+- 내려받은 가중치의 SHA-256을 확인한 뒤 설치해 손상된 파일 적용 차단
+- 가중치는 소스 및 휴대용 ZIP과 분리된 Release 자산으로 배포
+
+## 함께 포함된 기존 수정
 
 - 최신 LUMI Chat 기준으로 Little LUMI 연동 패치를 다시 생성
 - 긴 답변이 중간에 잘리지 않고 완성된 본문으로 전달되도록 보정
@@ -25,4 +31,4 @@
 - 기존 사용자는 Little LUMI를 종료한 뒤 `INSTALL.cmd`를 다시 한 번 실행하면 됩니다.
 - ChatGPT 웹 사용량과 이용 조건은 로그인한 계정 기준으로 적용됩니다.
 - 현재 실행 파일은 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.
-- TTS 자동 설치에는 약 5.7GB의 공식 GPT-SoVITS 다운로드와 사용 권한이 있는 `GPT_weights_v2.7z`가 필요합니다.
+- TTS 자동 설치 시 약 5.7GB의 공식 GPT-SoVITS 통합판과 약 420MB의 LUMI 음성 가중치를 내려받습니다.

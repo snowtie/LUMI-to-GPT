@@ -21,6 +21,8 @@ $SourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgeSource = Join-Path $SourceRoot "LUMI to GPT.exe"
 $GptSovitsUrl = "https://huggingface.co/lj1995/GPT-SoVITS-windows-package/resolve/main/GPT-SoVITS-v2-240821.7z?download=true"
 $GptSovitsSha256 = "9D9BA79DE6ACA0CF28A3635CCB1DBBB08B6AEF362C4352E32FAD99BB49E3000A"
+$VoiceWeightsUrl = "https://github.com/snowtie/LUMI-to-GPT/releases/download/v0.9.0/GPT_weights_v2.7z"
+$VoiceWeightsSha256 = "4A0FF7071C3D0D4C56A48016D8BC66CA5C8C626D599C0E71300F0DE3AFA14E79"
 if (-not (Test-Path -LiteralPath $BridgeSource)) {
     throw "설치 파일이 없습니다: $BridgeSource"
 }
@@ -73,6 +75,27 @@ function Find-GptSovitsRuntime([string]$Root) {
     return $null
 }
 
+function Save-Download([string]$Url, [string]$Destination, [string]$FailureMessage) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+    $partial = "$Destination.part"
+    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+    try {
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curl) {
+            & $curl.Source -L --fail --progress-bar -o $partial $Url
+            if ($LASTEXITCODE -ne 0) { throw $FailureMessage }
+        }
+        else {
+            Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing
+        }
+        Move-Item -LiteralPath $partial -Destination $Destination -Force
+    }
+    catch {
+        if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+        throw
+    }
+}
+
 function Resolve-GptSovitsArchive([string]$RequestedPath, [string]$DataRoot) {
     if ($RequestedPath) {
         $resolved = [IO.Path]::GetFullPath($RequestedPath)
@@ -85,18 +108,8 @@ function Resolve-GptSovitsArchive([string]$RequestedPath, [string]$DataRoot) {
     $downloadRoot = Join-Path $DataRoot "downloads"
     $archive = Join-Path $downloadRoot "GPT-SoVITS-v2-240821.7z"
     if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-        New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
-        $partial = "$archive.part"
         Write-Host "GPT-SoVITS 공식 통합판을 내려받습니다. 약 5.7GB입니다."
-        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-        if ($curl) {
-            & $curl.Source -L --fail --progress-bar -o $partial $GptSovitsUrl
-            if ($LASTEXITCODE -ne 0) { throw "GPT-SoVITS 다운로드에 실패했습니다." }
-        }
-        else {
-            Invoke-WebRequest -Uri $GptSovitsUrl -OutFile $partial -UseBasicParsing
-        }
-        Move-Item -LiteralPath $partial -Destination $archive -Force
+        Save-Download $GptSovitsUrl $archive "GPT-SoVITS 다운로드에 실패했습니다."
     }
     $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
     if ($actualHash -ne $GptSovitsSha256) {
@@ -105,17 +118,26 @@ function Resolve-GptSovitsArchive([string]$RequestedPath, [string]$DataRoot) {
     return $archive
 }
 
-function Resolve-VoiceWeightsArchive([string]$RequestedPath) {
-    $candidates = @()
-    if ($RequestedPath) { $candidates += $RequestedPath }
-    $candidates += (Join-Path $SourceRoot "GPT_weights_v2.7z")
-    if ($env:USERPROFILE) { $candidates += (Join-Path $env:USERPROFILE "Downloads\GPT_weights_v2.7z") }
-    foreach ($candidate in $candidates) {
-        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-            return [IO.Path]::GetFullPath($candidate)
+function Resolve-VoiceWeightsArchive([string]$RequestedPath, [string]$DataRoot) {
+    if ($RequestedPath) {
+        $resolved = [IO.Path]::GetFullPath($RequestedPath)
+        if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+            throw "음성 가중치를 찾지 못했습니다: $resolved"
         }
+        return $resolved
     }
-    throw "음성 가중치 GPT_weights_v2.7z를 설치기 옆에 놓거나 -VoiceWeightsArchive로 지정해 주세요."
+
+    $downloadRoot = Join-Path $DataRoot "downloads"
+    $archive = Join-Path $downloadRoot "GPT_weights_v2.7z"
+    if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+        Write-Host "LUMI 음성 가중치를 내려받습니다. 약 420MB입니다."
+        Save-Download $VoiceWeightsUrl $archive "LUMI 음성 가중치 다운로드에 실패했습니다."
+    }
+    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+    if ($actualHash -ne $VoiceWeightsSha256) {
+        throw "LUMI 음성 가중치의 SHA-256이 올바르지 않습니다: $archive"
+    }
+    return $archive
 }
 
 function Find-PreferredFile([string]$Root, [string]$PreferredName, [string]$Filter) {
@@ -173,7 +195,7 @@ function Install-GptSovits([string]$LumiApp, [string]$DataRoot) {
     $gptWeight = Get-ChildItem -LiteralPath $modelRoot -Recurse -File -Filter "LUMI-e10.ckpt" -ErrorAction SilentlyContinue | Select-Object -First 1
     $sovitsWeight = Get-ChildItem -LiteralPath $modelRoot -Recurse -File -Filter "LUMI_e8_s880.pth" -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $gptWeight -or -not $sovitsWeight) {
-        $weightsArchive = Resolve-VoiceWeightsArchive $VoiceWeightsArchive
+        $weightsArchive = Resolve-VoiceWeightsArchive $VoiceWeightsArchive $resolvedDataRoot
         Write-Host "LUMI 음성 가중치를 설치합니다."
         Expand-SafeArchive $weightsArchive $modelRoot
     }

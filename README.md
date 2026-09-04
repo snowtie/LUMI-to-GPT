@@ -19,7 +19,7 @@
 
 1. 창작마당에서 `LUMI Chat`를 구독하고 다운로드 받은 GitHub 배포 ZIP을 풉니다.
 2. Little LUMI를 한 번 실행해 LUMI Chat을 활성화한 뒤 종료합니다.
-3. `INSTALL.cmd`를 실행하고 `GPT 애드온만` 또는 `GPT 애드온 + 로컬 TTS`를 고릅니다.
+3. `INSTALL.cmd`를 실행하고 `GPT 애드온만` 또는 `GPT 애드온 + LUMI TTS`를 고릅니다.
 4. Little LUMI를 다시 실행합니다.
 5. 바탕화면의 `LUMI to GPT`를 실행하고 ChatGPT에 로그인합니다.
 6. ChatGPT에서 LUMI 전용 프로젝트를 만들고, 오른쪽 위 `LUMI 프로젝트`에서 `현재 프로젝트 연결`을 누릅니다.
@@ -33,9 +33,9 @@
 ## 휴대용 설치 모드
 
 - `GPT Add-on only` — 작은 GPT 웹 브리지와 Little LUMI 연동 패치만 설치합니다.
-- `GPT Add-on + local GPT-SoVITS TTS` — 위 구성에 GPT-SoVITS 실행 환경과 사용자가 준비한 음성 가중치를 추가하고 `루미 AI 설정`까지 자동으로 채웁니다.
+- `GPT Add-on + LUMI GPT-SoVITS TTS` — 위 구성에 GPT-SoVITS 실행 환경과 LUMI 음성 가중치를 자동으로 추가하고 `루미 AI 설정`까지 채웁니다.
 
-TTS 모드는 약 5.7GB인 [공식 GPT-SoVITS v2 Windows 통합판](https://huggingface.co/lj1995/GPT-SoVITS-windows-package/blob/main/GPT-SoVITS-v2-240821.7z)을 내려받아 `%LOCALAPPDATA%\LumiToGPT`에 풉니다. `GPT_weights_v2.7z`는 저작권과 배포 권한 문제 때문에 저장소나 기본 ZIP에 포함하지 않습니다. 본인이 사용할 권리가 있는 가중치 파일을 `INSTALL.cmd` 옆이나 다운로드 폴더에 둬야 합니다.
+TTS 모드는 약 5.7GB인 [공식 GPT-SoVITS v2 Windows 통합판](https://huggingface.co/lj1995/GPT-SoVITS-windows-package/blob/main/GPT-SoVITS-v2-240821.7z)과 배포 허가를 받은 약 420MB의 `GPT_weights_v2.7z`를 내려받아 `%LOCALAPPDATA%\LumiToGPT`에 설치합니다. 가중치는 소스 저장소와 휴대용 ZIP에는 넣지 않고 v0.9.0 GitHub Release의 별도 자산으로 배포하며, 자세한 범위는 [VOICE_MODEL_NOTICE.txt](VOICE_MODEL_NOTICE.txt)를 따릅니다.
 
 참조 음성은 설치된 LUMI Voice Pack에서 찾습니다. 다른 참조 음성을 사용하려면 `install.ps1`의 `-ReferenceAudio`, `-ReferenceText` 옵션으로 직접 지정할 수 있습니다.
 
@@ -70,4 +70,4 @@ python .\tests\smoke_release.py
 ```
 
 소스 코드는 BSD 3-Clause로 공개합니다. Little LUMI와 Shimeji-ee에서 수정한 부분의 원저작권·라이선스는 [NOTICE.txt](NOTICE.txt)에 따릅니다.
-독립 배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v0.8.3-windows-x64.zip`, `release\workshop-content`에 생성됩니다. `release\SHA256SUMS.txt`로 다운로드 파일을 확인할 수 있습니다. Steam 항목의 필요 항목에는 `LUMI Chat`의 Workshop ID `3794360578`을 지정해야 합니다.
+독립 배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v0.9.0-windows-x64.zip`, `release\workshop-content`에 생성됩니다. `release\SHA256SUMS.txt`로 다운로드 파일을 확인할 수 있습니다. Steam 항목의 필요 항목에는 `LUMI Chat`의 Workshop ID `3794360578`을 지정해야 합니다.

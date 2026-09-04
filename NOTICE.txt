@@ -7,10 +7,12 @@ BSD 3-Clause License in LICENSE.
 LUMI to GPT is an unofficial community extension. It is not endorsed by
 STUDIO LUMI, the Little LUMI developers, OpenAI, or the LUMI Chat author.
 
-This distribution contains no Little LUMI character artwork, sprite images,
-persona text, trained voice weights, or LUMI Chat package files. The installer
-applies a small, plainly modified compatibility patch to a user's own Little
-LUMI installation and creates a backup of the original JAR.
+The source repository and portable installer ZIP contain no Little LUMI
+character artwork, sprite images, persona text, trained voice weights, or
+LUMI Chat package files. An authorized voice model is distributed separately
+as a GitHub Release asset under VOICE_MODEL_NOTICE.txt. The installer applies
+a small, plainly modified compatibility patch to a user's own Little LUMI
+installation and creates a backup of the original JAR.
 
 Portions of the compatibility patch are modified from code distributed with
 Little LUMI Model and Shimeji-ee. The required notices follow.

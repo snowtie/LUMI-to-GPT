@@ -8,7 +8,7 @@ STUDIO LUMI, LUMI Chat 제작자 또는 OpenAI의 공식 제품이 아닌 비공
 설치
 1. LUMI Chat과 이 항목을 모두 구독합니다.
 2. Little LUMI를 한 번 실행한 뒤 종료합니다.
-3. LUMI-to-GPT\INSTALL.cmd를 한 번 실행합니다.
+3. LUMI-to-GPT\INSTALL.cmd를 실행하고 GPT 애드온만 또는 LUMI TTS 포함 설치를 고릅니다.
 4. Little LUMI와 바탕화면의 LUMI to GPT를 실행합니다.
 5. ChatGPT에 로그인하고 LUMI 프로젝트를 연결합니다.
 6. Little LUMI의 루미 AI 설정에서 두뇌는 GPT Web, 목소리는 GPT-SoVITS를 선택합니다.

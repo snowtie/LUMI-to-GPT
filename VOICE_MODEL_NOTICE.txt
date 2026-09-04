@@ -1,0 +1,10 @@
+LUMI voice model weights notice
+===============================
+
+GPT_weights_v2.7z is distributed as a separate binary GitHub Release asset
+with permission for use by this project. It is not covered by the BSD
+3-Clause License that applies to the LUMI to GPT source code.
+
+All rights not expressly granted remain with their respective rights holders.
+This notice does not grant broader rights to source recordings or other LUMI
+character assets.

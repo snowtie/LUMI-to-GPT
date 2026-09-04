@@ -4,7 +4,7 @@ chcp 65001 >nul
 echo LUMI to GPT portable installer
 echo.
 echo [1] GPT Add-on only
-echo [2] GPT Add-on + local GPT-SoVITS TTS
+echo [2] GPT Add-on + LUMI GPT-SoVITS TTS
 echo.
 choice /C 12 /N /M "Select 1 or 2: "
 if errorlevel 2 (

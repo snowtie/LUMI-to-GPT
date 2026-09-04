@@ -1,6 +1,6 @@
 [package]
 name = "lumi-to-gpt"
-version = "0.8.3"
+version = "0.9.0"
 description = "Connect LUMI Chat to a signed-in ChatGPT Web account"
 edition = "2021"
 

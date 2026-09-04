@@ -282,8 +282,9 @@ def test_release_package() -> dict[str, object]:
         RELEASE_DIR / "RELEASE_NOTES.md",
         RELEASE_DIR / "LICENSE",
         RELEASE_DIR / "NOTICE.txt",
+        RELEASE_DIR / "VOICE_MODEL_NOTICE.txt",
         RELEASE_DIR / "LUMI-to-GPT.zip",
-        RELEASE_DIR / "LUMI-to-GPT-v0.8.3-windows-x64.zip",
+        RELEASE_DIR / "LUMI-to-GPT-v0.9.0-windows-x64.zip",
         RELEASE_DIR / "SHA256SUMS.txt",
         RELEASE_DIR / "workshop-description.txt",
         RELEASE_DIR / "workshop-dependency.txt",
@@ -298,6 +299,7 @@ def test_release_package() -> dict[str, object]:
         tool_root / "RELEASE_NOTES.md",
         tool_root / "LICENSE",
         tool_root / "NOTICE.txt",
+        tool_root / "VOICE_MODEL_NOTICE.txt",
         tool_root / "little-lumi-patch" / "lumi-to-gpt-little-lumi-patch.jar",
         tool_root / "little-lumi-patch" / "original-class-sha256.json",
     ]
@@ -320,7 +322,7 @@ def test_release_package() -> dict[str, object]:
         if not expected_patch_classes <= patch_files:
             raise AssertionError({"patch_entries": sorted(patch_files)})
         marker = patch.read("META-INF/lumi-to-gpt-patch.properties").decode("utf-8")
-        if "version=0.8.3" not in marker:
+        if "version=0.9.0" not in marker:
             raise AssertionError(marker)
         for entry in expected_patch_classes:
             if not entry.endswith(".class"):
@@ -353,13 +355,14 @@ def test_release_package() -> dict[str, object]:
         "RELEASE_NOTES.md",
         "LICENSE",
         "NOTICE.txt",
+        "VOICE_MODEL_NOTICE.txt",
         "little-lumi-patch/lumi-to-gpt-little-lumi-patch.jar",
         "little-lumi-patch/original-class-sha256.json",
     }
     if archive_files != expected_archive_files:
         raise AssertionError({"archive_files": sorted(archive_files)})
 
-    versioned_package = RELEASE_DIR / "LUMI-to-GPT-v0.8.3-windows-x64.zip"
+    versioned_package = RELEASE_DIR / "LUMI-to-GPT-v0.9.0-windows-x64.zip"
     if versioned_package.read_bytes() != (RELEASE_DIR / "LUMI-to-GPT.zip").read_bytes():
         raise AssertionError("버전 ZIP과 호환용 ZIP의 내용이 다릅니다.")
 
@@ -372,6 +375,8 @@ def test_release_package() -> dict[str, object]:
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         if f"{digest}  {artifact.name}" not in checksums:
             raise AssertionError({"missing_checksum": artifact.name})
+    if "4a0ff7071c3d0d4c56a48016d8bc66ca5c8c626d599c0e71300f0de3afa14e79  GPT_weights_v2.7z" not in checksums:
+        raise AssertionError("음성 가중치 체크섬이 없습니다.")
 
     with (RELEASE_DIR / "workshop-preview.png").open("rb") as stream:
         if stream.read(8) != b"\x89PNG\r\n\x1a\n":
@@ -606,7 +611,7 @@ def main() -> int:
                     time.sleep(0.1)
             if not health or not health.get("ok") or not health.get("lumi_chat_found"):
                 raise RuntimeError({"bridge_health": health})
-            if health.get("version") != "0.8.3":
+            if health.get("version") != "0.9.0":
                 raise AssertionError({"version": health.get("version")})
 
             worker_error: list[Exception] = []

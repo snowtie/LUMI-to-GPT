@@ -6,7 +6,8 @@ if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriRoot = Join-Path $ProjectRoot "src-tauri"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
-$Version = "0.8.3"
+$Version = "0.9.0"
+$VoiceWeightsSha256 = "4a0ff7071c3d0d4c56a48016d8bc66ca5c8c626d599c0e71300f0de3afa14e79"
 $ResolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\') + '\'
 $ResolvedReleaseRoot = [IO.Path]::GetFullPath($ReleaseRoot)
 if (-not $ResolvedReleaseRoot.StartsWith($ResolvedProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -36,6 +37,7 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $Releas
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "RELEASE_NOTES.md") -Destination $ReleaseRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $ReleaseRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "NOTICE.txt") -Destination $ReleaseRoot
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "VOICE_MODEL_NOTICE.txt") -Destination $ReleaseRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "install.ps1") -Destination $ReleaseRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "INSTALL.cmd") -Destination $ReleaseRoot
 $ReleasePatchRoot = Join-Path $ReleaseRoot "little-lumi-patch"
@@ -52,6 +54,7 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $Worksh
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "RELEASE_NOTES.md") -Destination $WorkshopToolRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $WorkshopToolRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "NOTICE.txt") -Destination $WorkshopToolRoot
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "VOICE_MODEL_NOTICE.txt") -Destination $WorkshopToolRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "install.ps1") -Destination $WorkshopToolRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "INSTALL.cmd") -Destination $WorkshopToolRoot
 Copy-Item -LiteralPath $ReleasePatchRoot -Destination $WorkshopToolRoot -Recurse
@@ -101,6 +104,7 @@ $PackageFiles = @(
     (Join-Path $ReleaseRoot "RELEASE_NOTES.md"),
     (Join-Path $ReleaseRoot "LICENSE"),
     (Join-Path $ReleaseRoot "NOTICE.txt"),
+    (Join-Path $ReleaseRoot "VOICE_MODEL_NOTICE.txt"),
     (Join-Path $ReleaseRoot "install.ps1"),
     (Join-Path $ReleaseRoot "INSTALL.cmd"),
     $ReleasePatchRoot
@@ -117,6 +121,7 @@ $ChecksumLines = foreach ($Target in $ChecksumTargets) {
     $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Target).Hash.ToLowerInvariant()
     "$Hash  $([IO.Path]::GetFileName($Target))"
 }
+$ChecksumLines += "$VoiceWeightsSha256  GPT_weights_v2.7z"
 $Utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllLines((Join-Path $ReleaseRoot "SHA256SUMS.txt"), $ChecksumLines, $Utf8)
 
