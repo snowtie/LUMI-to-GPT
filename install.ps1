@@ -297,7 +297,7 @@ function Install-GptSovits([string]$LumiApp, [string]$DataRoot) {
             throw "완전하지 않은 GPT-SoVITS 폴더가 있습니다: $runtimeRoot"
         }
         $runtimeArchive = Resolve-GptSovitsArchive $GptSovitsArchive $resolvedDataRoot
-        Write-Host "GPT-SoVITS 통합판을 설치합니다."
+        Write-Host "GPT-SoVITS 통합판의 압축을 해제합니다. 오래 걸릴 수 있으니 CMD 창을 닫지 마세요."
         Expand-SafeArchive $runtimeArchive $runtimeRoot
         $runtime = Find-GptSovitsRuntime $runtimeRoot
         if (-not $runtime) { throw "압축 파일에서 GPT-SoVITS 실행 환경을 찾지 못했습니다." }
@@ -308,7 +308,7 @@ function Install-GptSovits([string]$LumiApp, [string]$DataRoot) {
     $sovitsWeight = Get-ChildItem -LiteralPath $modelRoot -Recurse -File -Filter "LUMI_e8_s880.pth" -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $gptWeight -or -not $sovitsWeight) {
         $weightsArchive = Resolve-VoiceWeightsArchive $VoiceWeightsArchive $resolvedDataRoot
-        Write-Host "LUMI 음성 가중치를 설치합니다."
+        Write-Host "LUMI 음성 가중치를 설치합니다. 완료 메시지가 나올 때까지 기다려 주세요."
         Expand-SafeArchive $weightsArchive $modelRoot
     }
     $gptWeight = Find-PreferredFile $modelRoot "LUMI-e10.ckpt" "*.ckpt"
@@ -454,6 +454,12 @@ try {
     Write-Host "LUMI to GPT 설치 로그"
     Write-Host "모드: $InstallMode"
     Write-Host "로그: $LogPath"
+    if ($InstallMode -in @("WithTts", "TtsOnly")) {
+        Write-Host ""
+        Write-Host "중요: 대용량 압축 해제와 음성 가중치 준비 중에는 한동안 새 출력이 없을 수 있습니다." -ForegroundColor Yellow
+        Write-Host "'설치 완료' 메시지가 나올 때까지 이 CMD 창을 닫지 말고 기다려 주세요." -ForegroundColor Yellow
+        Write-Host ""
+    }
 
     Set-InstallStep "애드온 파일 확인"
     $ResolvedTargetRoot = [IO.Path]::GetFullPath($TargetRoot)

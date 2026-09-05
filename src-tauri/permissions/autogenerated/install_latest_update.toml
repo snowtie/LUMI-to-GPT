@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-latest-update"
+description = "Enables the install_latest_update command without any pre-configured scope."
+commands.allow = ["install_latest_update"]
+
+[[permission]]
+identifier = "deny-install-latest-update"
+description = "Denies the install_latest_update command without any pre-configured scope."
+commands.deny = ["install_latest_update"]

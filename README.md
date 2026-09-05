@@ -37,6 +37,8 @@ OpenAI API 키, Python, 브라우저 확장 프로그램은 필요하지 않습�
 - `GPT Add-on + LUMI GPT-SoVITS TTS` — 위 구성에 GPT-SoVITS 실행 환경과 LUMI 음성 가중치를 추가하고 `루미 AI 설정`까지 채웁니다.
 - `Add LUMI GPT-SoVITS TTS to an existing install` — 1번으로 이미 설치한 애드온은 건드리지 않고 GPT-SoVITS와 LUMI 음성만 추가합니다.
 
+2번이나 3번은 대용량 압축 해제와 가중치 준비 중 한동안 새 출력이 없을 수 있습니다. `설치 완료` 메시지가 나올 때까지 CMD 창을 닫지 마세요.
+
 설치 과정은 `%LOCALAPPDATA%\LumiToGPT\logs`에 단계별 로그를 남깁니다. 실패하면 콘솔에 실패 단계, 오류 종류, 발생 위치와 정확한 로그 파일 경로가 표시됩니다.
 
 설치기는 OpenAI의 공식 Codex App Server Windows x64 압축본 약 75MB를 내려받아 해시를 확인합니다. TTS 모드는 추가로 약 5.7GB인 [공식 GPT-SoVITS v2 Windows 통합판](https://huggingface.co/lj1995/GPT-SoVITS-windows-package/blob/main/GPT-SoVITS-v2-240821.7z)과 배포 허가를 받은 약 420MB의 `GPT_weights_v2.7z`를 내려받습니다. 음성 가중치는 v0.9.0 GitHub Release의 별도 자산으로 유지되며 자세한 범위는 [VOICE_MODEL_NOTICE.txt](VOICE_MODEL_NOTICE.txt)를 따릅니다.
@@ -58,13 +60,14 @@ LUMI to GPT가 추가하는 기능:
 - LUMI Chat의 OpenAI 호환 요청을 공식 Codex App Server로 전달
 - ChatGPT 장치 코드 OAuth 로그인과 자동 토큰 갱신
 - 실행할 때 GitHub 최신 Release를 확인하고 새 버전을 UI에서 제안
+- `지금 업데이트` 한 번으로 최신 Release를 검증·설치한 뒤 자동 재실행
 - `GPT-5.6 Luna` 저사용량 기본값
 - 답변 전체를 LUMI Chat의 원래 응답 경로에 반환
 - 말풍선 표시 시간 6~60초 적용
 - 로컬 GPT-SoVITS 선행 준비, 자동 절전·초절전과 집중 모드 즉시 종료
 - Python 없는 Codex 앱·CLI 작업 완료 알림 MCP
 
-AI·목소리·페르소나 설정은 모두 Little LUMI의 기존 `루미 AI 설정`에서 관리합니다. LUMI to GPT 창은 계정 연결과 업데이트 확인만 다루며 별도 대화 입력창은 없습니다. 업데이트는 자동 설치하지 않고 사용자가 `새 버전 받기`를 누를 때 공식 GitHub Release 페이지를 엽니다.
+AI·목소리·페르소나 설정은 모두 Little LUMI의 기존 `루미 AI 설정`에서 관리합니다. LUMI to GPT 창은 계정 연결과 업데이트 확인만 다루며 별도 대화 입력창은 없습니다. 새 버전이 있으면 `지금 업데이트`를 눌러 자동으로 교체하고 다시 실행할 수 있습니다.
 
 ## 개발 및 검증
 
@@ -76,4 +79,4 @@ python .\tests\smoke_release.py
 
 소스 코드는 BSD 3-Clause로 공개합니다. Little LUMI, Shimeji-ee와 Codex 구성요소의 원저작권·라이선스는 [NOTICE.txt](NOTICE.txt)에 따릅니다.
 
-배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.2-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.
+배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.3-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.

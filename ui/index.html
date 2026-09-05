@@ -96,7 +96,7 @@
             <dt>현재 버전</dt><dd id="current-version">확인 중</dd>
             <dt>최신 버전</dt><dd id="latest-version">확인 중</dd>
           </dl>
-          <button id="open-release" type="button" hidden>새 버전 받기</button>
+          <button id="open-release" type="button" hidden>지금 업데이트</button>
           <button id="check-update" class="secondary" type="button">다시 확인</button>
           <div id="release-notes"></div>
           <p id="update-message" class="message">새 버전이 있으면 여기에서 알려드립니다.</p>
@@ -194,7 +194,8 @@
         setStatus(updateStatus, "", "자동 확인 중");
         updateMessage.textContent = "GitHub에서 최신 배포 버전을 확인하고 있습니다.";
         openRelease.hidden = true;
-        openRelease.textContent = "새 버전 받기";
+        openRelease.textContent = "지금 업데이트";
+        openRelease.dataset.action = "install";
         releaseNotes.style.display = "none";
         try {
           const [health, response] = await Promise.all([
@@ -229,6 +230,7 @@
           latestVersion.textContent = "확인할 수 없음";
           updateMessage.textContent = `${errorText(error)} 다시 확인하거나 GitHub 배포 페이지를 이용해 주세요.`;
           openRelease.textContent = "GitHub 배포 페이지 열기";
+          openRelease.dataset.action = "release";
           openRelease.hidden = false;
         } finally {
           checkUpdate.disabled = false;
@@ -283,7 +285,23 @@
 
       checkUpdate.addEventListener("click", refreshUpdate);
       openRelease.addEventListener("click", async () => {
-        await window.__TAURI__?.core?.invoke("open_latest_release");
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (!invoke) return;
+        if (openRelease.dataset.action === "release") {
+          await invoke("open_latest_release");
+          return;
+        }
+        openRelease.disabled = true;
+        setStatus(updateStatus, "", "업데이트 준비 중");
+        updateMessage.textContent = "업데이트 창을 여는 중입니다.";
+        try {
+          await invoke("install_latest_update");
+          updateMessage.textContent = "업데이트 창에서 자동 설치를 진행합니다. 완료될 때까지 창을 닫지 마세요.";
+        } catch (error) {
+          setStatus(updateStatus, "error", "업데이트 실패");
+          updateMessage.textContent = errorText(error);
+          openRelease.disabled = false;
+        }
       });
 
       window.__TAURI__?.core?.invoke("prewarm_gpt_sovits").catch(() => {});

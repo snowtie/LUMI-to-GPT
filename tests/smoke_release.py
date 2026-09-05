@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -245,7 +245,8 @@ def test_release_package() -> dict[str, object]:
         "GPT-5.6 Luna",
         "prewarm_gpt_sovits",
         "api.github.com/repos/snowtie/LUMI-to-GPT/releases/latest",
-        "새 버전 받기",
+        "지금 업데이트",
+        "install_latest_update",
         'src="lumi-chat-addon.png"',
     ):
         if expected not in project_ui:
@@ -260,6 +261,7 @@ def test_release_package() -> dict[str, object]:
         "prewarm_gpt_sovits",
         "open_codex_login_url",
         "open_latest_release",
+        "install_latest_update",
     )
     app_manifest = (PROJECT_DIR / "src-tauri" / "build.rs").read_text(encoding="utf-8")
     capability = json.loads(
@@ -402,6 +404,9 @@ def test_release_package() -> dict[str, object]:
     installer_menu = (RELEASE_DIR / "INSTALL.cmd").read_text(encoding="utf-8")
     if "[3] Add LUMI GPT-SoVITS TTS" not in installer_menu or "INSTALL_MODE=TtsOnly" not in installer_menu:
         raise AssertionError("TTS만 추가하는 설치 선택지가 없습니다.")
+    installer_script = (RELEASE_DIR / "install.ps1").read_text(encoding="utf-8-sig")
+    if "'설치 완료' 메시지가 나올 때까지 이 CMD 창을 닫지 말고 기다려 주세요." not in installer_script:
+        raise AssertionError("TTS 대용량 설치 대기 안내가 없습니다.")
 
     with (
         tempfile.TemporaryDirectory() as install_dir,
@@ -671,6 +676,96 @@ def test_release_package() -> dict[str, object]:
         for expected in ("설치에 실패했습니다.", "실패 단계: 애드온 파일 확인", "오류 종류:", "상세 로그:"):
             if expected not in failure_text:
                 raise AssertionError({"missing_failure_detail": expected, "log": failure_text})
+
+    with tempfile.TemporaryDirectory() as update_dir, tempfile.TemporaryDirectory() as lumi_dir:
+        update_root = Path(update_dir)
+        target_root = update_root / "app"
+        target_root.mkdir()
+        (target_root / "codex-app-server.exe").write_bytes(b"existing-runtime")
+        (target_root / "codex-app-server.version").write_text("0.153.4", encoding="ascii")
+        create_fake_lumi(Path(lumi_dir))
+
+        package = RELEASE_DIR / f"LUMI-to-GPT-v{VERSION}-windows-x64.zip"
+        checksum = RELEASE_DIR / "SHA256SUMS.txt"
+        responses: dict[str, tuple[str, bytes]] = {
+            "/package.zip": ("application/zip", package.read_bytes()),
+            "/SHA256SUMS.txt": ("text/plain", checksum.read_bytes()),
+        }
+
+        class UpdateHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path == "/release":
+                    port = self.server.server_address[1]
+                    payload = json.dumps(
+                        {
+                            "tag_name": f"v{VERSION}",
+                            "assets": [
+                                {
+                                    "name": package.name,
+                                    "browser_download_url": f"http://127.0.0.1:{port}/package.zip",
+                                },
+                                {
+                                    "name": "SHA256SUMS.txt",
+                                    "browser_download_url": f"http://127.0.0.1:{port}/SHA256SUMS.txt",
+                                },
+                            ],
+                        }
+                    ).encode("utf-8")
+                    content_type = "application/json"
+                elif self.path in responses:
+                    content_type, payload = responses[self.path]
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        update_server = ThreadingHTTPServer(("127.0.0.1", 0), UpdateHandler)
+        update_thread = threading.Thread(target=update_server.serve_forever, daemon=True)
+        update_thread.start()
+        try:
+            updater = update_root / "update.ps1"
+            updater.write_bytes(b"\xef\xbb\xbf" + (PROJECT_DIR / "update.ps1").read_bytes())
+            env = os.environ.copy()
+            env["LUMI_APP_DIR"] = lumi_dir
+            env["LOCALAPPDATA"] = update_dir
+            update_result = subprocess.run(
+                [
+                    str(powershell),
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(updater),
+                    "-TargetRoot",
+                    str(target_root),
+                    "-ReleaseApiUrl",
+                    f"http://127.0.0.1:{update_server.server_address[1]}/release",
+                    "-SkipRestart",
+                    "-NoPause",
+                ],
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                env=env,
+                timeout=60,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if update_result.returncode != 0:
+                raise AssertionError({"stdout": update_result.stdout, "stderr": update_result.stderr})
+            installed = target_root / "lumi-to-gpt.exe"
+            if hashlib.sha256(installed.read_bytes()).digest() != hashlib.sha256(APP_EXE.read_bytes()).digest():
+                raise AssertionError("자동 업데이트가 최신 실행 파일로 교체하지 못했습니다.")
+        finally:
+            update_server.shutdown()
+            update_server.server_close()
+            update_thread.join(timeout=3)
     return {
         "files": len(required),
         "archive_files": len(archive_files),
@@ -678,6 +773,7 @@ def test_release_package() -> dict[str, object]:
         "portable_tts": True,
         "tts_only": True,
         "detailed_install_log": True,
+        "one_click_update": True,
     }
 
 

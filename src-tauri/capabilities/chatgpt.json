@@ -7,6 +7,7 @@
   "permissions": [
     "allow-prewarm-gpt-sovits",
     "allow-open-codex-login-url",
-    "allow-open-latest-release"
+    "allow-open-latest-release",
+    "allow-install-latest-update"
   ]
 }

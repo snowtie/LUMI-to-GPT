@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.2";
+const VERSION: &str = "1.0.3";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -2200,6 +2200,43 @@ fn open_latest_release() -> Result<(), String> {
         .map_err(|error| format!("업데이트 페이지를 열지 못했습니다: {error}"))
 }
 
+fn embedded_updater() -> Vec<u8> {
+    let mut script = vec![0xEF, 0xBB, 0xBF];
+    script.extend_from_slice(include_bytes!("../../update.ps1"));
+    script
+}
+
+#[tauri::command]
+fn install_latest_update() -> Result<(), String> {
+    let update_root = local_data_dir().join("update");
+    fs::create_dir_all(&update_root)
+        .map_err(|error| format!("업데이트 폴더를 만들지 못했습니다: {error}"))?;
+    let script_path = update_root.join("update.ps1");
+    fs::write(&script_path, embedded_updater())
+        .map_err(|error| format!("업데이트 설치기를 준비하지 못했습니다: {error}"))?;
+    let target_root = env::current_exe()
+        .map_err(|error| format!("현재 설치 경로를 확인하지 못했습니다: {error}"))?
+        .parent()
+        .ok_or_else(|| "현재 설치 폴더를 확인하지 못했습니다.".to_owned())?
+        .to_path_buf();
+
+    let mut command = Command::new("powershell.exe");
+    command
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(&script_path)
+        .arg("-TargetRoot")
+        .arg(target_root);
+    #[cfg(windows)]
+    command.creation_flags(0x00000010);
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("업데이트 창을 열지 못했습니다: {error}"))
+}
+
 fn show_window(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
@@ -2218,7 +2255,8 @@ fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
         .invoke_handler(tauri::generate_handler![
             prewarm_gpt_sovits,
             open_codex_login_url,
-            open_latest_release
+            open_latest_release,
+            install_latest_update
         ])
         .setup(move |app| {
             WebviewWindowBuilder::new(app, "account", WebviewUrl::App("index.html".into()))
@@ -2368,6 +2406,15 @@ mod tests {
         assert!(prompt.contains("[시스템]\n반말로 말해."));
         assert!(prompt.contains("[사용자]\n화면 봐 줘"));
         assert_eq!(images, vec!["data:image/png;base64,AA=="]);
+    }
+
+    #[test]
+    fn embedded_updater_has_utf8_bom_and_verified_release_flow() {
+        let script = embedded_updater();
+        assert!(script.starts_with(&[0xEF, 0xBB, 0xBF]));
+        let text = String::from_utf8(script[3..].to_vec()).unwrap();
+        assert!(text.contains("SHA256SUMS.txt"));
+        assert!(text.contains("-SkipMcp -SkipShortcut -SkipLumiPatch"));
     }
 
     #[test]
