@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -256,6 +256,9 @@ def test_release_package() -> dict[str, object]:
             raise AssertionError({"obsolete_web_bridge_ui": removed})
     if (PROJECT_DIR / "src-tauri" / "src" / "init.js").exists():
         raise AssertionError("ChatGPT DOM 주입 스크립트가 남아 있습니다.")
+    project_rust = (PROJECT_DIR / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+    if 'join("app").join("codex-app-server.exe")' not in project_rust:
+        raise AssertionError("설치 폴더 밖 실행 시 Codex App Server 검색 경로가 없습니다.")
 
     tauri_commands = (
         "prewarm_gpt_sovits",

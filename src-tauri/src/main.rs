@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.3";
+const VERSION: &str = "1.0.4";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -1576,15 +1576,22 @@ fn codex_app_server_command() -> AppResult<(PathBuf, Vec<String>)> {
             .unwrap_or_else(|| codex_default_arguments(&executable));
         return Ok((executable, arguments));
     }
-    if let Ok(current) = env::current_exe() {
-        if let Some(parent) = current.parent() {
-            let bundled = parent.join("codex-app-server.exe");
-            if bundled.is_file() {
-                return Ok((bundled, Vec::new()));
-            }
-        }
+    let current = env::current_exe().ok();
+    if let Some(executable) = find_codex_app_server(current.as_deref(), &local_data_dir()) {
+        return Ok((executable, Vec::new()));
     }
     Ok((PathBuf::from("codex"), vec!["app-server".to_owned()]))
+}
+
+fn find_codex_app_server(current_exe: Option<&Path>, data_root: &Path) -> Option<PathBuf> {
+    let beside_app = current_exe
+        .and_then(Path::parent)
+        .map(|parent| parent.join("codex-app-server.exe"));
+    let installed = data_root.join("app").join("codex-app-server.exe");
+    beside_app
+        .into_iter()
+        .chain([installed])
+        .find(|candidate| candidate.is_file())
 }
 
 fn codex_default_arguments(executable: &Path) -> Vec<String> {
@@ -2415,6 +2422,22 @@ mod tests {
         let text = String::from_utf8(script[3..].to_vec()).unwrap();
         assert!(text.contains("SHA256SUMS.txt"));
         assert!(text.contains("-SkipMcp -SkipShortcut -SkipLumiPatch"));
+    }
+
+    #[test]
+    fn release_executable_finds_installed_codex_app_server() {
+        let root = env::temp_dir().join(format!(
+            "lumi-installed-codex-test-{}",
+            Uuid::new_v4().simple()
+        ));
+        let installed = root.join("app").join("codex-app-server.exe");
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::write(&installed, b"test").unwrap();
+
+        let found = find_codex_app_server(Some(Path::new(r"D:\Downloads\LUMI to GPT.exe")), &root);
+
+        assert_eq!(found.as_deref(), Some(installed.as_path()));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
