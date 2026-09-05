@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.5";
+const VERSION: &str = "1.0.6";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";

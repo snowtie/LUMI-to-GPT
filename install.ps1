@@ -96,7 +96,7 @@ function Invoke-BridgeSetup([string]$Executable, [string]$Argument, [string]$Lab
 function Find-LittleLumiApp {
     if ($env:LUMI_APP_DIR) {
         $configured = [IO.Path]::GetFullPath($env:LUMI_APP_DIR)
-        if (Test-Path -LiteralPath (Join-Path $configured "Shimeji-ee.jar")) { return $configured }
+        if ([IO.File]::Exists([IO.Path]::Combine($configured, "Shimeji-ee.jar"))) { return $configured }
     }
     foreach ($drive in [char[]](67..90)) {
         foreach ($suffix in @(
@@ -105,7 +105,7 @@ function Find-LittleLumiApp {
             "Program Files\Steam\steamapps\common\Little LUMI\app"
         )) {
             $candidate = "${drive}:\$suffix"
-            if (Test-Path -LiteralPath (Join-Path $candidate "Shimeji-ee.jar")) { return $candidate }
+            if ([IO.File]::Exists([IO.Path]::Combine($candidate, "Shimeji-ee.jar"))) { return $candidate }
         }
     }
     throw "Little LUMI 설치 폴더를 찾지 못했습니다."

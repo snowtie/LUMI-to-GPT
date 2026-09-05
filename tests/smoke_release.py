@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -413,6 +413,10 @@ def test_release_package() -> dict[str, object]:
     for expected in ("$Shortcut.IconLocation", "ie4uinit.exe", "SHChangeNotify"):
         if expected not in installer_script:
             raise AssertionError({"missing_shortcut_refresh": expected})
+    if 'Join-Path $candidate "Shimeji-ee.jar"' in installer_script:
+        raise AssertionError("존재하지 않는 드라이브를 Join-Path로 검사하고 있습니다.")
+    if '[IO.File]::Exists([IO.Path]::Combine($candidate, "Shimeji-ee.jar"))' not in installer_script:
+        raise AssertionError("없는 Steam 드라이브를 건너뛰는 검사가 없습니다.")
 
     with (
         tempfile.TemporaryDirectory() as install_dir,
