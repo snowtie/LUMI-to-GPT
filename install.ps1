@@ -548,8 +548,28 @@ try {
             $Shortcut = $Shell.CreateShortcut($ShortcutPath)
             $Shortcut.TargetPath = $BridgeExecutable
             $Shortcut.WorkingDirectory = $ResolvedTargetRoot
+            $Shortcut.IconLocation = "$BridgeExecutable,0"
             $Shortcut.Description = "Little LUMI를 ChatGPT 계정에 연결"
             $Shortcut.Save()
+            try {
+                $IconRefresh = Join-Path $env:SystemRoot "System32\ie4uinit.exe"
+                if (Test-Path -LiteralPath $IconRefresh -PathType Leaf) {
+                    & $IconRefresh -ClearIconCache | Out-Null
+                    & $IconRefresh -show | Out-Null
+                }
+                Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class LumiToGptShellRefresh {
+    [DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
+}
+"@
+                [LumiToGptShellRefresh]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+            }
+            catch {
+                Write-Warning "바로가기 아이콘 새로 고침에 실패했습니다: $($_.Exception.Message)"
+            }
         }
     }
 

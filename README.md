@@ -60,7 +60,7 @@ LUMI to GPT가 추가하는 기능:
 - LUMI Chat의 OpenAI 호환 요청을 공식 Codex App Server로 전달
 - ChatGPT 장치 코드 OAuth 로그인과 자동 토큰 갱신
 - 실행할 때 GitHub 최신 Release를 확인하고 새 버전을 UI에서 제안
-- `지금 업데이트` 한 번으로 최신 Release를 검증·설치한 뒤 자동 재실행
+- `지금 업데이트` 한 번으로 정식 설치 폴더와 바탕화면 바로가기를 갱신한 뒤 자동 재실행
 - `GPT-5.6 Luna` 저사용량 기본값
 - 답변 전체를 LUMI Chat의 원래 응답 경로에 반환
 - 말풍선 표시 시간 6~60초 적용
@@ -79,4 +79,4 @@ python .\tests\smoke_release.py
 
 소스 코드는 BSD 3-Clause로 공개합니다. Little LUMI, Shimeji-ee와 Codex 구성요소의 원저작권·라이선스는 [NOTICE.txt](NOTICE.txt)에 따릅니다.
 
-배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.4-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.
+배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.5-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.

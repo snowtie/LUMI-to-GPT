@@ -3,6 +3,7 @@ param(
     [string]$TargetRoot,
     [string]$ReleaseApiUrl = "https://api.github.com/repos/snowtie/LUMI-to-GPT/releases/latest",
     [switch]$SkipRestart,
+    [switch]$SkipShortcut,
     [switch]$NoPause
 )
 
@@ -106,9 +107,13 @@ try {
     }
 
     Write-Host "설치를 시작합니다. 실행 중인 LUMI to GPT는 자동으로 종료됩니다."
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer `
-        -TargetRoot $ResolvedTargetRoot -InstallMode AddonOnly `
-        -SkipMcp -SkipShortcut -SkipLumiPatch
+    $installArguments = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installer,
+        "-TargetRoot", $ResolvedTargetRoot, "-InstallMode", "AddonOnly",
+        "-SkipMcp", "-SkipLumiPatch"
+    )
+    if ($SkipShortcut) { $installArguments += "-SkipShortcut" }
+    & powershell.exe @installArguments
     if ($LASTEXITCODE -ne 0) { throw "업데이트 설치에 실패했습니다. 종료 코드: $LASTEXITCODE" }
 
     $installedExecutable = Join-Path $ResolvedTargetRoot "lumi-to-gpt.exe"

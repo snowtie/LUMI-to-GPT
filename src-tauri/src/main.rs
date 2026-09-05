@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.4";
+const VERSION: &str = "1.0.5";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -2213,19 +2213,29 @@ fn embedded_updater() -> Vec<u8> {
     script
 }
 
+fn update_target_root(current_exe: &Path, data_root: &Path) -> PathBuf {
+    let installed_name = current_exe
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("lumi-to-gpt.exe"));
+    if installed_name {
+        current_exe.parent().unwrap_or(data_root).to_path_buf()
+    } else {
+        data_root.join("app")
+    }
+}
+
 #[tauri::command]
-fn install_latest_update() -> Result<(), String> {
+fn install_latest_update(app: tauri::AppHandle) -> Result<(), String> {
     let update_root = local_data_dir().join("update");
     fs::create_dir_all(&update_root)
         .map_err(|error| format!("업데이트 폴더를 만들지 못했습니다: {error}"))?;
     let script_path = update_root.join("update.ps1");
     fs::write(&script_path, embedded_updater())
         .map_err(|error| format!("업데이트 설치기를 준비하지 못했습니다: {error}"))?;
-    let target_root = env::current_exe()
-        .map_err(|error| format!("현재 설치 경로를 확인하지 못했습니다: {error}"))?
-        .parent()
-        .ok_or_else(|| "현재 설치 폴더를 확인하지 못했습니다.".to_owned())?
-        .to_path_buf();
+    let current_exe = env::current_exe()
+        .map_err(|error| format!("현재 설치 경로를 확인하지 못했습니다: {error}"))?;
+    let target_root = update_target_root(&current_exe, &local_data_dir());
 
     let mut command = Command::new("powershell.exe");
     command
@@ -2240,8 +2250,9 @@ fn install_latest_update() -> Result<(), String> {
     command.creation_flags(0x00000010);
     command
         .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("업데이트 창을 열지 못했습니다: {error}"))
+        .map_err(|error| format!("업데이트 창을 열지 못했습니다: {error}"))?;
+    app.exit(0);
+    Ok(())
 }
 
 fn show_window(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
@@ -2421,7 +2432,23 @@ mod tests {
         assert!(script.starts_with(&[0xEF, 0xBB, 0xBF]));
         let text = String::from_utf8(script[3..].to_vec()).unwrap();
         assert!(text.contains("SHA256SUMS.txt"));
-        assert!(text.contains("-SkipMcp -SkipShortcut -SkipLumiPatch"));
+        assert!(text.contains("if ($SkipShortcut)"));
+    }
+
+    #[test]
+    fn release_update_targets_the_installed_app_folder() {
+        let data_root = Path::new(r"C:\Users\tester\AppData\Local\LumiToGPT");
+        assert_eq!(
+            update_target_root(
+                Path::new(r"C:\Users\tester\Downloads\LUMI to GPT.exe"),
+                data_root
+            ),
+            data_root.join("app")
+        );
+        assert_eq!(
+            update_target_root(Path::new(r"E:\Portable\lumi-to-gpt.exe"), data_root),
+            PathBuf::from(r"E:\Portable")
+        );
     }
 
     #[test]

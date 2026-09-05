@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -410,6 +410,9 @@ def test_release_package() -> dict[str, object]:
     installer_script = (RELEASE_DIR / "install.ps1").read_text(encoding="utf-8-sig")
     if "'설치 완료' 메시지가 나올 때까지 이 CMD 창을 닫지 말고 기다려 주세요." not in installer_script:
         raise AssertionError("TTS 대용량 설치 대기 안내가 없습니다.")
+    for expected in ("$Shortcut.IconLocation", "ie4uinit.exe", "SHChangeNotify"):
+        if expected not in installer_script:
+            raise AssertionError({"missing_shortcut_refresh": expected})
 
     with (
         tempfile.TemporaryDirectory() as install_dir,
@@ -751,6 +754,7 @@ def test_release_package() -> dict[str, object]:
                     "-ReleaseApiUrl",
                     f"http://127.0.0.1:{update_server.server_address[1]}/release",
                     "-SkipRestart",
+                    "-SkipShortcut",
                     "-NoPause",
                 ],
                 text=True,
