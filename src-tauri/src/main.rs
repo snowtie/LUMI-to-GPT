@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.6";
+const VERSION: &str = "1.0.7";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -737,6 +737,110 @@ fn gpt_sovits_server_reachable(base_url: &str) -> bool {
         .any(|address| TcpStream::connect_timeout(&address, Duration::from_millis(350)).is_ok())
 }
 
+fn compact_error_text(text: &str, max_chars: usize) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max_chars {
+        return compact;
+    }
+    format!("{}...", compact.chars().take(max_chars).collect::<String>())
+}
+
+fn describe_gpt_sovits_http_error(operation: &str, error: ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(status, response) => {
+            let mut body = String::new();
+            let _ = response
+                .into_reader()
+                .take(32 * 1024)
+                .read_to_string(&mut body);
+            let detail = compact_error_text(&body, 4_000);
+            if detail.is_empty() {
+                format!("GPT-SoVITS {operation} 실패: HTTP {status}")
+            } else {
+                format!("GPT-SoVITS {operation} 실패: HTTP {status}: {detail}")
+            }
+        }
+        ureq::Error::Transport(error) => {
+            format!("GPT-SoVITS {operation} 연결 실패: {error}")
+        }
+    }
+}
+
+fn read_text_tail(path: &Path, max_bytes: u64) -> String {
+    let Ok(mut file) = fs::File::open(path) else {
+        return String::new();
+    };
+    let length = file.metadata().map_or(0, |metadata| metadata.len());
+    let start = length.saturating_sub(max_bytes);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if start > 0 {
+        if let Some(first_line) = text.find('\n') {
+            text = text[first_line + 1..].to_owned();
+        }
+    }
+    text
+}
+
+fn write_tts_diagnostic_at(
+    data_root: &Path,
+    voice: &GptSovitsSettings,
+    operation: &str,
+    error: &str,
+) -> AppResult<PathBuf> {
+    let log_dir = data_root.join("logs");
+    fs::create_dir_all(&log_dir)?;
+    let diagnostic_path = log_dir.join("tts-last-error.log");
+    let server_log_path = data_root.join("gpt-sovits.log");
+    let runtime_path = if voice.runtime_dir.trim().is_empty() {
+        data_root.join("gpt-sovits")
+    } else {
+        PathBuf::from(voice.runtime_dir.trim())
+    };
+    let diagnostic = json!({
+        "timestamp_unix": SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |value| value.as_secs()),
+        "level": "error",
+        "service": "lumi-to-gpt",
+        "operation": operation,
+        "error": error,
+        "base_url": voice.base_url,
+        "checks": {
+            "server_reachable": gpt_sovits_server_reachable(&voice.base_url),
+            "runtime_path": runtime_path,
+            "runtime_exists": runtime_path.exists(),
+            "gpt_weights_path": voice.gpt_weights_path,
+            "gpt_weights_exists": Path::new(voice.gpt_weights_path.trim()).is_file(),
+            "sovits_weights_path": voice.sovits_weights_path,
+            "sovits_weights_exists": Path::new(voice.sovits_weights_path.trim()).is_file(),
+            "reference_audio_path": voice.reference_audio_path,
+            "reference_audio_exists": Path::new(voice.reference_audio_path.trim()).is_file()
+        },
+        "gpt_sovits_log": {
+            "path": server_log_path,
+            "tail": read_text_tail(&server_log_path, 16 * 1024)
+        }
+    });
+    fs::write(
+        &diagnostic_path,
+        format!("{}\n", serde_json::to_string_pretty(&diagnostic)?),
+    )?;
+    Ok(diagnostic_path)
+}
+
+fn tts_failure_response(voice: &GptSovitsSettings, operation: &str, error: &str) -> String {
+    let short_error = compact_error_text(error, 180);
+    match write_tts_diagnostic_at(&local_data_dir(), voice, operation, error) {
+        Ok(path) => format!("{short_error} | 상세 로그: {}", path.display()),
+        Err(log_error) => format!("{short_error} | 상세 로그 저장 실패: {log_error}"),
+    }
+}
+
 #[derive(Debug)]
 struct GptSovitsRuntime {
     root: PathBuf,
@@ -1052,7 +1156,7 @@ fn ensure_gpt_sovits_weights(voice: &GptSovitsSettings) -> AppResult<()> {
         ureq::get(&url)
             .timeout(Duration::from_secs(120))
             .call()
-            .map_err(|error| format!("GPT-SoVITS 가중치 적용 실패: {error}"))?;
+            .map_err(|error| describe_gpt_sovits_http_error("가중치 적용", error))?;
     }
     *loaded = Some(target);
     Ok(())
@@ -1165,7 +1269,7 @@ fn fetch_gpt_sovits_wav(voice: &GptSovitsSettings, text: &str) -> AppResult<Vec<
         .set("Content-Type", "application/json; charset=utf-8")
         .timeout(Duration::from_secs(120))
         .send_string(&payload)
-        .map_err(|error| format!("GPT-SoVITS 연결 실패: {error}"))?;
+        .map_err(|error| describe_gpt_sovits_http_error("음성 합성", error))?;
     let mut wav = Vec::new();
     response
         .into_reader()
@@ -1980,7 +2084,11 @@ fn handle_request(mut request: Request, context: HttpContext) {
             }
             match fetch_gpt_sovits_wav(&voice, text) {
                 Ok(wav) => respond_bytes(request, 200, "audio/wav", wav),
-                Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+                Err(error) => {
+                    let message =
+                        tts_failure_response(&voice, "voice_synthesis", &error.to_string());
+                    respond_json(request, 502, json!({"error":message}));
+                }
             }
         }
         "/notify" => {
@@ -2852,6 +2960,72 @@ mod tests {
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
         request_thread.join().unwrap();
+    }
+
+    #[test]
+    fn gpt_sovits_http_failure_keeps_the_upstream_error_body() {
+        let server = Server::http("127.0.0.1:0").unwrap();
+        let address = server.server_addr().to_ip().unwrap();
+        let request_thread = thread::spawn(move || {
+            let request = server.recv().unwrap();
+            request
+                .respond(
+                    Response::from_string(r#"{"detail":"CUDA out of memory"}"#)
+                        .with_status_code(500),
+                )
+                .unwrap();
+        });
+        let voice = GptSovitsSettings {
+            enabled: true,
+            base_url: format!("http://{address}"),
+            reference_audio_path: r"C:\voice\lumi.wav".to_owned(),
+            ..GptSovitsSettings::default()
+        };
+
+        let error = fetch_gpt_sovits_wav(&voice, "오류 확인").unwrap_err();
+
+        assert!(error.to_string().contains("HTTP 500"));
+        assert!(error.to_string().contains("CUDA out of memory"));
+        request_thread.join().unwrap();
+    }
+
+    #[test]
+    fn tts_failure_writes_a_self_contained_diagnostic() {
+        let root = env::temp_dir().join(format!("lumi-tts-diagnostic-{}", Uuid::new_v4().simple()));
+        let runtime = root.join("gpt-sovits");
+        let gpt = root.join("lumi.ckpt");
+        let reference = root.join("reference.wav");
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(&gpt, b"gpt").unwrap();
+        fs::write(&reference, b"wav").unwrap();
+        fs::write(
+            root.join("gpt-sovits.log"),
+            "Traceback\nCUDA out of memory\n",
+        )
+        .unwrap();
+        let voice = GptSovitsSettings {
+            enabled: true,
+            base_url: "http://127.0.0.1:9".to_owned(),
+            runtime_dir: runtime.to_string_lossy().into_owned(),
+            gpt_weights_path: gpt.to_string_lossy().into_owned(),
+            sovits_weights_path: root.join("missing.pth").to_string_lossy().into_owned(),
+            reference_audio_path: reference.to_string_lossy().into_owned(),
+            ..GptSovitsSettings::default()
+        };
+
+        let path = write_tts_diagnostic_at(&root, &voice, "voice_synthesis", "HTTP 500").unwrap();
+        let diagnostic: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(diagnostic["operation"], "voice_synthesis");
+        assert_eq!(diagnostic["checks"]["runtime_exists"], true);
+        assert_eq!(diagnostic["checks"]["gpt_weights_exists"], true);
+        assert_eq!(diagnostic["checks"]["sovits_weights_exists"], false);
+        assert_eq!(diagnostic["checks"]["reference_audio_exists"], true);
+        assert!(diagnostic["gpt_sovits_log"]["tail"]
+            .as_str()
+            .unwrap()
+            .contains("CUDA out of memory"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

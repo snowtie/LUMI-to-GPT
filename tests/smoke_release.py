@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -819,7 +819,16 @@ def main() -> int:
                     self.send_error(404)
                     return
                 length = int(self.headers.get("Content-Length", "0"))
-                captured_voice_payloads.append(json.loads(self.rfile.read(length).decode("utf-8")))
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                if payload.get("text") == "__diagnostic_failure__":
+                    body = json.dumps({"detail": "CUDA out of memory"}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                captured_voice_payloads.append(payload)
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("Content-Length", str(len(preview_wav)))
@@ -1019,6 +1028,37 @@ for line in sys.stdin:
             if saved_settings["voice"]["gpt_weights_path"] != r"C:\models\lumi.ckpt":
                 raise AssertionError({"voice_weights": saved_settings.get("voice")})
 
+            diagnostic_payload = {
+                "text": "__diagnostic_failure__",
+                "base_url": f"http://127.0.0.1:{voice_port}",
+                "runtime_dir": r"C:\runtime",
+                "gpt_weights_path": r"C:\models\lumi.ckpt",
+                "sovits_weights_path": r"C:\models\lumi.pth",
+                "reference_audio_path": r"D:\voice\lumi.wav",
+                "prompt_text": "참조 음성 문장",
+                "text_language": "ko",
+                "prompt_language": "ko",
+                "power_mode": "ultra_saver",
+                "speed_factor": "1.0",
+            }
+            try:
+                post_json(f"{base_url}/voice/synthesize", diagnostic_payload, timeout=10)
+                raise AssertionError("TTS 진단용 502 응답이 발생하지 않았습니다.")
+            except urllib.error.HTTPError as error:
+                error_body = json.loads(error.read().decode("utf-8"))
+                if error.code != 502 or "CUDA out of memory" not in error_body.get("error", ""):
+                    raise AssertionError({"tts_diagnostic_response": error_body}) from error
+                if "tts-last-error.log" not in error_body["error"]:
+                    raise AssertionError({"tts_diagnostic_path": error_body}) from error
+            diagnostic_path = local_data / "logs" / "tts-last-error.log"
+            diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+            if diagnostic.get("operation") != "voice_synthesis":
+                raise AssertionError({"tts_diagnostic_operation": diagnostic})
+            if "CUDA out of memory" not in diagnostic.get("error", ""):
+                raise AssertionError({"tts_diagnostic_error": diagnostic})
+            if not diagnostic.get("checks", {}).get("server_reachable"):
+                raise AssertionError({"tts_diagnostic_server": diagnostic})
+
             (lumi_root / "conf" / "ai.properties").write_text(
                 "tts.enabled=false\ntts.provider=fish\nchatter.enabled=false\n",
                 encoding="utf-8",
@@ -1062,6 +1102,7 @@ for line in sys.stdin:
                         "voice_queue": voice_health["pending_voice"],
                         "native_ai_settings_patch": True,
                         "single_tts_request": len(captured_voice_payloads),
+                        "tts_diagnostic_log": True,
                         "update_reset_recovery": True,
                         "mcp": mcp_notification,
                         "release": release,
