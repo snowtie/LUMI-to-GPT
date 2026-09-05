@@ -40,6 +40,41 @@ function Set-InstallStep([string]$Step) {
     Write-Host "[$Step]"
 }
 
+function Get-InstalledBridgeProcesses([string]$Executable) {
+    $resolvedExecutable = [IO.Path]::GetFullPath($Executable)
+    @(
+        Get-CimInstance -ClassName Win32_Process -Filter "Name = 'lumi-to-gpt.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.ExecutablePath -and
+                [String]::Equals(
+                    [IO.Path]::GetFullPath($_.ExecutablePath),
+                    $resolvedExecutable,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            }
+    )
+}
+
+function Stop-InstalledBridge([string]$Executable) {
+    $processes = @(Get-InstalledBridgeProcesses $Executable)
+    if ($processes.Count -eq 0) { return }
+
+    Write-Host "실행 중인 기존 LUMI to GPT를 종료합니다."
+    foreach ($process in $processes) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 100
+        $remaining = @(Get-InstalledBridgeProcesses $Executable)
+    } while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
+
+    if ($remaining.Count -gt 0) {
+        throw "실행 중인 기존 LUMI to GPT를 종료하지 못했습니다. 작업 관리자에서 종료한 뒤 다시 시도해 주세요: $Executable"
+    }
+}
+
 function Invoke-BridgeSetup([string]$Executable, [string]$Argument, [string]$Label) {
     $safeLabel = $Label -replace '[^A-Za-z0-9_-]', '-'
     $stdoutPath = Join-Path $LogRoot "$InstallRunId-$safeLabel.stdout.log"
@@ -428,7 +463,9 @@ try {
             throw "기존 LUMI to GPT 설치를 찾지 못했습니다: $BridgeExecutable. 먼저 1번 또는 2번으로 애드온을 설치해 주세요."
         }
     }
-    else {
+    Stop-InstalledBridge $BridgeExecutable
+
+    if ($InstallMode -ne "TtsOnly") {
         if (-not (Test-Path -LiteralPath $BridgeSource -PathType Leaf)) {
             throw "설치 파일이 없습니다: $BridgeSource"
         }

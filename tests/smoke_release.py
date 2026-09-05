@@ -22,7 +22,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -421,22 +421,23 @@ def test_release_package() -> dict[str, object]:
             / "v1.0"
             / "powershell.exe"
         )
+        installer_command = [
+            str(powershell),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(tool_root / "install.ps1"),
+            "-TargetRoot",
+            install_dir,
+            "-CodexAppServerArchive",
+            str(codex_archive),
+            "-SkipMcp",
+            "-SkipShortcut",
+            "-SkipLumiPatch",
+        ]
         result = subprocess.run(
-            [
-                str(powershell),
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(tool_root / "install.ps1"),
-                "-TargetRoot",
-                install_dir,
-                "-CodexAppServerArchive",
-                str(codex_archive),
-                "-SkipMcp",
-                "-SkipShortcut",
-                "-SkipLumiPatch",
-            ],
+            installer_command,
             text=True,
             encoding="utf-8",
             capture_output=True,
@@ -464,6 +465,37 @@ def test_release_package() -> dict[str, object]:
         ):
             if expected not in configured:
                 raise AssertionError({"missing_lumi_chat_setting": expected})
+
+        installed_bridge = Path(install_dir) / "lumi-to-gpt.exe"
+        locked_bridge = subprocess.Popen(
+            [str(installed_bridge), "--mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        try:
+            time.sleep(0.5)
+            if locked_bridge.poll() is not None:
+                raise AssertionError("재설치 잠금 테스트용 애드온이 바로 종료됐습니다.")
+            reinstall = subprocess.run(
+                installer_command,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                env=env,
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if reinstall.returncode != 0:
+                raise AssertionError(reinstall.stderr or reinstall.stdout)
+            if "실행 중인 기존 LUMI to GPT를 종료합니다." not in reinstall.stdout:
+                raise AssertionError({"missing_running_app_notice": reinstall.stdout})
+            locked_bridge.wait(timeout=5)
+        finally:
+            if locked_bridge.poll() is None:
+                locked_bridge.kill()
+                locked_bridge.wait(timeout=5)
 
     with (
         tempfile.TemporaryDirectory() as install_dir,

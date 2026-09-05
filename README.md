@@ -76,4 +76,4 @@ python .\tests\smoke_release.py
 
 소스 코드는 BSD 3-Clause로 공개합니다. Little LUMI, Shimeji-ee와 Codex 구성요소의 원저작권·라이선스는 [NOTICE.txt](NOTICE.txt)에 따릅니다.
 
-배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.0-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.
+배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.1-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.
