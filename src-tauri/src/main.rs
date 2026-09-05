@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -25,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.1";
+const VERSION: &str = "1.0.2";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -35,6 +36,7 @@ const LATEST_RELEASE_URL: &str = "https://github.com/snowtie/LUMI-to-GPT/release
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(190);
 const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_AUDIO_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 6 * 1024 * 1024;
 const GPT_SOVITS_BALANCED_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const GPT_SOVITS_ULTRA_SAVER_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const GPT_SOVITS_START_TIMEOUT: Duration = Duration::from_secs(120);
@@ -1223,6 +1225,80 @@ struct CodexAppServer {
     next_id: u64,
 }
 
+fn decode_data_image(url: &str) -> AppResult<(&'static str, Vec<u8>)> {
+    let (metadata, encoded) = url
+        .split_once(',')
+        .ok_or("화면 이미지 데이터 형식이 올바르지 않습니다.")?;
+    let extension = match metadata.to_ascii_lowercase().as_str() {
+        "data:image/png;base64" => "png",
+        "data:image/jpeg;base64" | "data:image/jpg;base64" => "jpg",
+        "data:image/webp;base64" => "webp",
+        _ => return Err("지원하지 않는 화면 이미지 형식입니다.".into()),
+    };
+    let bytes = BASE64_STANDARD
+        .decode(encoded)
+        .map_err(|_| "화면 이미지 Base64를 읽지 못했습니다.")?;
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return Err("화면 이미지 크기가 허용 범위를 벗어났습니다.".into());
+    }
+    let signature_matches = match extension {
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+        _ => false,
+    };
+    if !signature_matches {
+        return Err("화면 이미지의 실제 형식이 표시된 형식과 다릅니다.".into());
+    }
+    Ok((extension, bytes))
+}
+
+struct TemporaryCodexImages {
+    paths: Vec<PathBuf>,
+}
+
+impl TemporaryCodexImages {
+    fn create(workspace: &Path, images: Vec<String>) -> AppResult<Self> {
+        let mut temporary = Self { paths: Vec::new() };
+        if images.is_empty() {
+            return Ok(temporary);
+        }
+        fs::create_dir_all(workspace)?;
+        for image in images {
+            let (extension, bytes) = decode_data_image(&image)?;
+            let path = workspace.join(format!(
+                "lumi-screen-{}.{}",
+                Uuid::new_v4().simple(),
+                extension
+            ));
+            fs::write(&path, bytes)?;
+            temporary.paths.push(path);
+        }
+        Ok(temporary)
+    }
+
+    fn input_items(&self) -> Vec<Value> {
+        self.paths
+            .iter()
+            .map(|path| {
+                json!({
+                    "type":"localImage",
+                    "path":path.to_string_lossy(),
+                    "detail":"original"
+                })
+            })
+            .collect()
+    }
+}
+
+impl Drop for TemporaryCodexImages {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 impl CodexAppServer {
     fn spawn() -> AppResult<Self> {
         let (executable, arguments) = codex_app_server_command()?;
@@ -1411,10 +1487,9 @@ impl CodexAppServer {
             .as_str()
             .ok_or("Codex 대화 ID를 받지 못했습니다.")?
             .to_owned();
+        let image_files = TemporaryCodexImages::create(&workspace, images)?;
         let mut input = vec![json!({"type":"text","text":prompt})];
-        for image in images {
-            input.push(json!({"type":"image","url":image,"detail":"low"}));
-        }
+        input.extend(image_files.input_items());
         let turn = self.request(
             "turn/start",
             json!({
@@ -2293,6 +2368,25 @@ mod tests {
         assert!(prompt.contains("[시스템]\n반말로 말해."));
         assert!(prompt.contains("[사용자]\n화면 봐 줘"));
         assert_eq!(images, vec!["data:image/png;base64,AA=="]);
+    }
+
+    #[test]
+    fn screen_image_becomes_temporary_local_codex_input() {
+        let root = env::temp_dir().join(format!(
+            "lumi-screen-input-test-{}",
+            Uuid::new_v4().simple()
+        ));
+        let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlZxZQAAAAASUVORK5CYII=";
+        let temporary = TemporaryCodexImages::create(&root, vec![png.to_owned()]).unwrap();
+        let path = temporary.paths[0].clone();
+        let inputs = temporary.input_items();
+        assert!(path.is_file());
+        assert_eq!(inputs[0]["type"], "localImage");
+        assert_eq!(inputs[0]["path"], path.to_string_lossy().as_ref());
+        assert_eq!(inputs[0]["detail"], "original");
+        drop(temporary);
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import io
@@ -22,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -758,6 +759,7 @@ def main() -> int:
             encoding="utf-8",
         )
         prompt_log = Path(local_dir) / "codex-prompt.txt"
+        image_log = Path(local_dir) / "codex-image.json"
         fake_codex = Path(local_dir) / "fake_codex_app_server.py"
         fake_codex.write_text(
             """\
@@ -767,6 +769,7 @@ import sys
 
 response_text = os.environ["LUMI_TEST_RESPONSE"]
 prompt_log = os.environ["LUMI_TEST_PROMPT_LOG"]
+image_log = os.environ["LUMI_TEST_IMAGE_LOG"]
 
 def send(message):
     print(json.dumps(message, ensure_ascii=False), flush=True)
@@ -792,6 +795,13 @@ for line in sys.stdin:
         text = next(item["text"] for item in params["input"] if item["type"] == "text")
         with open(prompt_log, "w", encoding="utf-8") as output:
             output.write(text)
+        local_image = next((item for item in params["input"] if item["type"] == "localImage"), None)
+        if local_image:
+            path = local_image["path"]
+            with open(path, "rb") as image:
+                prefix = image.read(8).hex()
+            with open(image_log, "w", encoding="utf-8") as output:
+                json.dump({"type": local_image["type"], "path": path, "detail": local_image.get("detail"), "prefix": prefix}, output)
         send({"id": request_id, "result": {"turn": {"id": "lumi-turn", "status": "inProgress", "items": []}}})
         item = {"id": "answer", "type": "agentMessage", "text": response_text}
         send({"method": "turn/completed", "params": {"threadId": "lumi-thread", "turn": {"id": "lumi-turn", "status": "completed", "items": [item], "error": None}}})
@@ -807,6 +817,7 @@ for line in sys.stdin:
         process_env["LUMI_CODEX_APP_SERVER_ARGS"] = json.dumps([str(fake_codex)])
         process_env["LUMI_TEST_RESPONSE"] = LONG_RESPONSE
         process_env["LUMI_TEST_PROMPT_LOG"] = str(prompt_log)
+        process_env["LUMI_TEST_IMAGE_LOG"] = str(image_log)
         process = subprocess.Popen(
             [str(APP_EXE), "--headless"],
             stdout=subprocess.DEVNULL,
@@ -843,6 +854,40 @@ for line in sys.stdin:
             captured_prompt = prompt_log.read_text(encoding="utf-8")
             if "[시스템]" not in captured_prompt or "[사용자]" not in captured_prompt:
                 raise AssertionError({"captured_prompt": captured_prompt})
+            screen_png = base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlZxZQAAAAASUVORK5CYII="
+            )
+            vision = post_json(
+                f"{base_url}/v1/chat/completions",
+                {
+                    "model": "gpt-5.6-luna",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "화면을 봐 줘"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,"
+                                        + base64.b64encode(screen_png).decode("ascii")
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+                timeout=10,
+            )
+            if vision["choices"][0]["message"]["content"] != LONG_RESPONSE:
+                raise AssertionError({"vision_response": vision})
+            captured_image = json.loads(image_log.read_text(encoding="utf-8"))
+            if captured_image["type"] != "localImage" or captured_image["detail"] != "original":
+                raise AssertionError({"codex_image_input": captured_image})
+            if captured_image["prefix"] != "89504e470d0a1a0a":
+                raise AssertionError({"codex_image_prefix": captured_image})
+            if Path(captured_image["path"]).exists():
+                raise AssertionError({"temporary_image_not_removed": captured_image["path"]})
             tts_result = run_lumi_tts_request(lumi_root)
             if tts_result != "16000.0:3200":
                 raise AssertionError({"tts_result": tts_result})
@@ -903,6 +948,7 @@ for line in sys.stdin:
                         "lumi_chat": health["lumi_chat_found"],
                         "lumi_chat_client": True,
                         "codex_oauth_backend": auth["backend"],
+                        "codex_local_image": True,
                         "completion_chars": len(text),
                         "completion_ending": text[-7:],
                         "original_lumi_response_path": True,

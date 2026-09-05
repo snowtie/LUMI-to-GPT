@@ -1,7 +1,8 @@
-# LUMI to GPT v1.0.1
+# LUMI to GPT v1.0.2
 
 ## 주요 변경 사항
 
+- 화면 구경 이미지를 Codex가 실제로 읽을 수 있는 임시 로컬 이미지 입력으로 전달하고 응답 후 즉시 삭제
 - 재설치나 TTS 추가 시 실행 중인 기존 애드온을 대상 경로 기준으로 안전하게 종료한 뒤 업데이트
 - ChatGPT 웹 DOM 자동화를 제거하고 OpenAI 공식 `Codex App Server`와 장치 코드 OAuth로 전환
 - API 키 없이 ChatGPT 계정으로 로그인하고 Codex 사용량으로 대화
