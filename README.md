@@ -39,6 +39,8 @@ OpenAI API 키, Python, 브라우저 확장 프로그램은 필요하지 않습�
 
 2번이나 3번은 대용량 압축 해제와 가중치 준비 중 한동안 새 출력이 없을 수 있습니다. `설치 완료` 메시지가 나올 때까지 CMD 창을 닫지 마세요.
 
+GPT-SoVITS는 CUDA를 사용할 수 있으면 GPU로 실행하고, CUDA를 사용할 수 없는 PC에서는 자동으로 CPU + FP32 모드로 전환합니다. CPU 모드는 첫 실행과 음성 생성이 상당히 느릴 수 있습니다.
+
 설치 과정은 `%LOCALAPPDATA%\LumiToGPT\logs`에 단계별 로그를 남깁니다. 실패하면 콘솔에 실패 단계, 오류 종류, 발생 위치와 정확한 로그 파일 경로가 표시됩니다.
 
 TTS에서 HTTP 502가 발생하면 실제 GPT-SoVITS 오류 응답과 런타임·가중치·참조 WAV 확인 결과를 `%LOCALAPPDATA%\LumiToGPT\logs\tts-last-error.log`에 자동으로 남깁니다.
@@ -81,4 +83,4 @@ python .\tests\smoke_release.py
 
 소스 코드는 BSD 3-Clause로 공개합니다. Little LUMI, Shimeji-ee와 Codex 구성요소의 원저작권·라이선스는 [NOTICE.txt](NOTICE.txt)에 따릅니다.
 
-배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.7-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.
+배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.8-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.

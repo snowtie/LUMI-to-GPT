@@ -6,7 +6,7 @@ if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriRoot = Join-Path $ProjectRoot "src-tauri"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
-$Version = "1.0.7"
+$Version = "1.0.8"
 $VoiceWeightsSha256 = "4a0ff7071c3d0d4c56a48016d8bc66ca5c8c626d599c0e71300f0de3afa14e79"
 $ResolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\') + '\'
 $ResolvedReleaseRoot = [IO.Path]::GetFullPath($ReleaseRoot)

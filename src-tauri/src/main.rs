@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.7";
+const VERSION: &str = "1.0.8";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -50,6 +50,23 @@ runtime_root = api_path.parent
 sys.path.insert(0, str(runtime_root))
 sys.path.insert(0, str(runtime_root / "GPT_SoVITS"))
 
+import torch
+import yaml
+
+api_arguments = [*sys.argv[2:]]
+if not torch.cuda.is_available():
+    source_config = runtime_root / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
+    cpu_config = Path(__file__).resolve().with_name("gpt-sovits-cpu.yaml")
+    with source_config.open("r", encoding="utf-8") as source:
+        config = yaml.safe_load(source) or {}
+    custom = config.setdefault("custom", dict(config.get("default_v2", {})))
+    custom["device"] = "cpu"
+    custom["is_half"] = False
+    with cpu_config.open("w", encoding="utf-8") as output:
+        yaml.safe_dump(config, output, allow_unicode=True, sort_keys=False)
+    api_arguments.extend(["-c", str(cpu_config)])
+    print("[LUMI to GPT] CUDA를 사용할 수 없어 CPU + FP32 모드로 시작합니다.", flush=True)
+
 from TTS_infer_pack.TextPreprocessor import TextPreprocessor
 
 original_get_phones_and_bert = TextPreprocessor.get_phones_and_bert
@@ -60,7 +77,7 @@ def get_phones_and_bert(self, text, language, version="v1", final=False):
     return original_get_phones_and_bert(self, text, language, version, final)
 
 TextPreprocessor.get_phones_and_bert = get_phones_and_bert
-sys.argv = [str(api_path), *sys.argv[2:]]
+sys.argv = [str(api_path), *api_arguments]
 runpy.run_path(str(api_path), run_name="__main__")
 "#;
 
@@ -2541,6 +2558,15 @@ mod tests {
         let text = String::from_utf8(script[3..].to_vec()).unwrap();
         assert!(text.contains("SHA256SUMS.txt"));
         assert!(text.contains("if ($SkipShortcut)"));
+    }
+
+    #[test]
+    fn gpt_sovits_runner_falls_back_to_cpu_without_cuda() {
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("torch.cuda.is_available()"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("custom[\"device\"] = \"cpu\""));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("custom[\"is_half\"] = False"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("gpt-sovits-cpu.yaml"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("api_arguments.extend([\"-c\""));
     }
 
     #[test]

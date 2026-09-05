@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(

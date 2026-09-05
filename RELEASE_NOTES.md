@@ -1,7 +1,9 @@
-# LUMI to GPT v1.0.7
+# LUMI to GPT v1.0.8
 
 ## 주요 변경 사항
 
+- CUDA를 사용할 수 없는 PC에서 GPT-SoVITS를 자동으로 CPU + FP32 모드로 시작
+- CPU 대체 설정은 별도 임시 YAML로 만들어 GPT-SoVITS 원본 설정을 보존
 - TTS HTTP 실패 때 GPT-SoVITS의 실제 오류 응답과 파일 상태를 `tts-last-error.log`에 자동 기록
 - 미리듣기 오류에 자동 생성된 상세 진단 로그 경로 표시
 - 존재하지 않는 Steam 드라이브를 검색할 때 설치가 중단되는 문제 수정

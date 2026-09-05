@@ -1,6 +1,6 @@
 [package]
 name = "lumi-to-gpt"
-version = "1.0.7"
+version = "1.0.8"
 description = "Connect LUMI Chat to ChatGPT through the official Codex App Server OAuth flow"
 edition = "2021"
 
