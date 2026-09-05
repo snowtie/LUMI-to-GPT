@@ -15,12 +15,28 @@ $ClassesRoot = Join-Path $BuildRoot "classes"
 $PatchJar = Join-Path $PatchRoot "lumi-to-gpt-little-lumi-patch.jar"
 $MarkerPath = Join-Path $PatchRoot "META-INF\lumi-to-gpt-patch.properties"
 $HashPath = Join-Path $PatchRoot "original-class-sha256.json"
-$Version = "0.9.0"
+$Version = "1.0.0"
 
 foreach ($required in @($BaseJar, $Javac, $JarTool)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "필요한 파일이 없습니다: $required"
     }
+}
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$ReferenceJar = $BaseJar
+$BaseArchive = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($BaseJar))
+try {
+    if ($BaseArchive.GetEntry("META-INF/lumi-to-gpt-patch.properties")) {
+        $OriginalBackup = "$BaseJar.lumi-to-gpt.bak"
+        if (-not (Test-Path -LiteralPath $OriginalBackup -PathType Leaf)) {
+            throw "패치되지 않은 Little LUMI 원본 백업을 찾지 못했습니다: $OriginalBackup"
+        }
+        $ReferenceJar = $OriginalBackup
+    }
+}
+finally {
+    $BaseArchive.Dispose()
 }
 
 $ResolvedPatchRoot = [IO.Path]::GetFullPath($PatchRoot).TrimEnd('\') + '\'
@@ -34,7 +50,7 @@ if (Test-Path -LiteralPath $BuildRoot) {
 New-Item -ItemType Directory -Force -Path $ClassesRoot | Out-Null
 
 $Sources = Get-ChildItem -LiteralPath (Join-Path $PatchRoot "src") -Recurse -Filter "*.java" | ForEach-Object FullName
-& $Javac -encoding UTF-8 -cp $BaseJar -d $ClassesRoot $Sources
+& $Javac -encoding UTF-8 -cp $ReferenceJar -d $ClassesRoot $Sources
 if ($LASTEXITCODE -ne 0) {
     throw "Little LUMI 연동 클래스 컴파일에 실패했습니다."
 }
@@ -49,8 +65,7 @@ $Entries = @(
     'com/group_finity/mascot/lumi/ai/TtsClient$Audio.class'
 )
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$Archive = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($BaseJar))
+$Archive = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($ReferenceJar))
 $Hashes = try {
     foreach ($EntryName in $Entries) {
         $Entry = $Archive.GetEntry($EntryName)
@@ -73,7 +88,7 @@ finally {
 
 $Utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText($HashPath, (($Hashes | ConvertTo-Json) + "`n"), $Utf8)
-$BaseHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $BaseJar).Hash
+$BaseHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ReferenceJar).Hash
 $Marker = "name=LUMI to GPT Little LUMI integration`nversion=$Version`nbaseJarSha256=$BaseHash`n"
 [IO.File]::WriteAllText($MarkerPath, $Marker, $Utf8)
 if (Test-Path -LiteralPath $PatchJar) {

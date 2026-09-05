@@ -14,6 +14,11 @@ as a GitHub Release asset under VOICE_MODEL_NOTICE.txt. The installer applies
 a small, plainly modified compatibility patch to a user's own Little LUMI
 installation and creates a backup of the original JAR.
 
+The installer downloads an unmodified Codex App Server executable from an
+official OpenAI Codex release. OpenAI Codex is distributed under the Apache
+License 2.0. Its source and license are available at:
+https://github.com/openai/codex
+
 Portions of the compatibility patch are modified from code distributed with
 Little LUMI Model and Shimeji-ee. The required notices follow.
 

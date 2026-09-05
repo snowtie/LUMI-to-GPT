@@ -1,6 +1,6 @@
 [h1]LUMI to GPT[/h1]
 
-LUMI Chat을 로그인된 ChatGPT 웹 계정에 연결하는 확장 모드입니다.
+LUMI Chat을 공식 Codex OAuth를 통해 ChatGPT 계정에 연결하는 확장 모드입니다.
 
 [b]비공식 커뮤니티 확장이며 STUDIO LUMI, LUMI Chat 제작자 또는 OpenAI의 공식 제품이 아닙니다.[/b]
 
@@ -9,14 +9,18 @@ LUMI Chat을 로그인된 ChatGPT 웹 계정에 연결하는 확장 모드입니
 
 [h2]추가되는 기능[/h2]
 [list]
-[*]별도 OpenAI API 키 없이 로그인된 ChatGPT 웹 사용
-[*]LUMI 전용 ChatGPT 프로젝트 연결
-[*]Little LUMI의 루미 AI 설정에 GPT Web·GPT-SoVITS 프로바이더 추가
+[*]별도 OpenAI API 키 없는 ChatGPT 장치 코드 OAuth
+[*]OpenAI 공식 Codex App Server 사용
+[*]저사용량 GPT-5.6 Luna 기본 모델
+[*]혼잣말과 화면 구경 기본 비활성화
+[*]계정·현재 버전 UI와 GitHub 새 버전 자동 확인
+[*]Little LUMI의 루미 AI 설정에 ChatGPT (OAuth)·GPT-SoVITS 프로바이더 추가
 [*]완성된 긴 답변 전체 반환
 [*]대화 말풍선 6~60초 안정화
 [*]로컬 GPT-SoVITS 선행 준비·자동 절전·초절전
 [*]집중 모드 즉시 무음과 오래된 음성 자동 취소
 [*]Python 없는 Codex 앱·CLI 작업 완료 알림 MCP
+[*]기존 설치에 LUMI TTS만 추가하는 설치 모드와 상세 오류 로그
 [/list]
 
 [h2]LUMI Chat 기능을 그대로 사용합니다[/h2]
@@ -28,8 +32,11 @@ LUMI Chat을 로그인된 ChatGPT 웹 계정에 연결하는 확장 모드입니
 [*]집중 모드 중 음성 차단
 [/list]
 
+[h2]사용량[/h2]
+대화는 일반 ChatGPT 웹 메시지가 아니라 로그인한 계정의 Codex 사용량과 한도를 따릅니다.
+
 [h2]설치[/h2]
-LUMI Chat과 이 항목을 구독하고 Little LUMI를 한 번 실행한 뒤 종료하세요. 이 항목의 [b]LUMI-to-GPT\INSTALL.cmd[/b]를 한 번 실행하고 Little LUMI를 다시 시작하면 됩니다. 설치기는 사용자의 Little LUMI JAR에 작은 연동 패치를 적용하며 원본 백업을 만듭니다.
+LUMI Chat과 이 항목을 구독하고 Little LUMI를 한 번 실행한 뒤 종료하세요. 이 항목의 [b]LUMI-to-GPT\INSTALL.cmd[/b]를 실행하고 Little LUMI를 다시 시작하면 됩니다. 설치기는 사용자의 Little LUMI JAR에 작은 연동 패치를 적용하며 원본 백업을 만듭니다.
 
 현재 실행 파일은 코드 서명되지 않아 처음 실행할 때 Windows SmartScreen 경고가 표시될 수 있습니다.
 

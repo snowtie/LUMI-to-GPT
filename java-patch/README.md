@@ -2,7 +2,7 @@
 
 이 패치는 현재 Little LUMI Model의 `Shimeji-ee.jar`에 아래 연결점만 추가합니다.
 
-- 두뇌 프로바이더 `GPT Web`
+- 두뇌 프로바이더 `ChatGPT (OAuth)`와 `GPT-5.6 Luna` 기본값
 - 목소리 프로바이더 `GPT-SoVITS`와 로컬 모델 설정 필드
 - 원본 `ChatService -> SpeechDirector -> TtsPlayer` 단일 출력 경로
 - 일반 말풍선 표시 시간 6~60초

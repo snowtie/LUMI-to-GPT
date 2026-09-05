@@ -1,34 +1,33 @@
-# LUMI to GPT v0.9.0
+# LUMI to GPT v1.0.0
 
-## 주요 기능
+## 주요 변경 사항
 
-- 로그인된 ChatGPT 웹 계정을 LUMI Chat의 `GPT Web` 프로바이더로 연결
-- Little LUMI의 기존 대화창·기억·페르소나·말풍선 경로 유지
-- Little LUMI의 `루미 AI 설정`에 `GPT Web`과 `GPT-SoVITS` 추가
+- ChatGPT 웹 DOM 자동화를 제거하고 OpenAI 공식 `Codex App Server`와 장치 코드 OAuth로 전환
+- API 키 없이 ChatGPT 계정으로 로그인하고 Codex 사용량으로 대화
+- 기본 모델을 저사용량 `GPT-5.6 Luna`, 추론 강도를 `낮음`으로 지정
+- 새 설치에서 자율 혼잣말과 화면 구경을 기본 비활성화
+- 계정 연결만 담당하는 작은 로컬 창으로 UI 단순화
+- 계정과 업데이트 상태를 한눈에 보는 UI 및 GitHub 새 버전 자동 확인 추가
+- 새 LUMI Chat Addon 로고를 앱·트레이 아이콘, UI와 창작마당 미리보기에 적용
+- Windows PowerShell 5.1에서 한글 설치 스크립트가 깨지던 UTF-8 BOM 문제 수정
+- 설치 시 공식 Codex App Server v0.153.4 Windows x64 파일을 다운로드하고 SHA-256 검증
+- 기존 애드온에 GPT-SoVITS와 LUMI 음성만 추가하는 설치 선택지 추가
+- 설치 실패 단계, 오류 종류, 위치와 자식 프로세스 출력을 `%LOCALAPPDATA%\LumiToGPT\logs`에 기록
+
+## 유지되는 기능
+
+- Little LUMI의 기존 대화창·기억·페르소나·말풍선 경로
+- 긴 답변 전체 반환과 말풍선 표시 시간 6~60초
 - 로컬 GPT-SoVITS 자동 실행, 자동 절전·초절전, 집중 모드 즉시 무음
-- Codex 앱·CLI 작업 완료 알림용 Rust MCP 포함
-- 휴대용 설치기에서 `GPT 애드온만`과 `GPT 애드온 + LUMI TTS` 선택 가능
-
-## v0.9.0 변경 사항
-
-- `GPT 애드온 + LUMI TTS`를 고르면 허가된 LUMI 음성 가중치를 GitHub Release에서 자동 다운로드
-- 내려받은 가중치의 SHA-256을 확인한 뒤 설치해 손상된 파일 적용 차단
-- 가중치는 소스 및 휴대용 ZIP과 분리된 Release 자산으로 배포
-
-## 함께 포함된 기존 수정
-
-- 최신 LUMI Chat 기준으로 Little LUMI 연동 패치를 다시 생성
-- 긴 답변이 중간에 잘리지 않고 완성된 본문으로 전달되도록 보정
-- 말풍선 표시 시간을 최소 6초, 최대 60초로 적용
-- 음성 미리듣기와 실제 대화 음성이 중복 재생되지 않도록 단일 재생 경로 사용
-- `%LOCALAPPDATA%\LumiToGPT\settings.json`에 GPT-SoVITS 설정을 보관하고 업데이트 후 복구
-- 설치 시 현재 원본 JAR을 새 백업으로 보존하고, 호환되지 않는 LUMI Chat 버전에는 적용을 중단
+- 음성 미리듣기와 대화 음성의 단일 재생 경로
+- 업데이트 후 GPT-SoVITS 설정 복구
+- Codex 앱·CLI 작업 완료 알림용 Rust MCP
 
 ## 설치 전 확인
 
 - Windows 11 x64용 배포본입니다.
 - Little LUMI와 LUMI Chat이 필요합니다.
-- 기존 사용자는 Little LUMI를 종료한 뒤 `INSTALL.cmd`를 다시 한 번 실행하면 됩니다.
-- ChatGPT 웹 사용량과 이용 조건은 로그인한 계정 기준으로 적용됩니다.
-- 현재 실행 파일은 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.
-- TTS 자동 설치 시 약 5.7GB의 공식 GPT-SoVITS 통합판과 약 420MB의 LUMI 음성 가중치를 내려받습니다.
+- 기존 사용자는 Little LUMI를 종료한 뒤 `INSTALL.cmd`를 다시 실행하세요.
+- 대화는 로그인한 계정의 Codex 사용량과 한도를 따릅니다.
+- 실행 파일은 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.
+- TTS 자동 설치 시 약 5.7GB의 GPT-SoVITS 통합판과 약 420MB의 LUMI 음성 가중치를 추가로 내려받습니다.

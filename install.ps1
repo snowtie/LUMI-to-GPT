@@ -1,9 +1,10 @@
-param(
+﻿param(
     [string]$TargetRoot = (Join-Path $env:LOCALAPPDATA "LumiToGPT\app"),
-    [ValidateSet("AddonOnly", "WithTts")]
+    [ValidateSet("AddonOnly", "WithTts", "TtsOnly")]
     [string]$InstallMode = "AddonOnly",
     [string]$GptSovitsArchive,
     [string]$VoiceWeightsArchive,
+    [string]$CodexAppServerArchive,
     [string]$ReferenceAudio,
     [string]$ReferenceText,
     [string]$TtsDataRoot = (Join-Path $env:LOCALAPPDATA "LumiToGPT"),
@@ -21,10 +22,40 @@ $SourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgeSource = Join-Path $SourceRoot "LUMI to GPT.exe"
 $GptSovitsUrl = "https://huggingface.co/lj1995/GPT-SoVITS-windows-package/resolve/main/GPT-SoVITS-v2-240821.7z?download=true"
 $GptSovitsSha256 = "9D9BA79DE6ACA0CF28A3635CCB1DBBB08B6AEF362C4352E32FAD99BB49E3000A"
+$CodexAppServerVersion = "0.153.4"
+$CodexAppServerUrl = "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-app-server-x86_64-pc-windows-msvc.exe.zip"
+$CodexAppServerSha256 = "B944B854A150BD3C269D9F17CF58756BC29FA248E93D9E6CD1DAC3CEE1D8A774"
 $VoiceWeightsUrl = "https://github.com/snowtie/LUMI-to-GPT/releases/download/v0.9.0/GPT_weights_v2.7z"
 $VoiceWeightsSha256 = "4A0FF7071C3D0D4C56A48016D8BC66CA5C8C626D599C0E71300F0DE3AFA14E79"
-if (-not (Test-Path -LiteralPath $BridgeSource)) {
-    throw "설치 파일이 없습니다: $BridgeSource"
+$InstallRunId = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+$LogBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
+$LogRoot = Join-Path $LogBase "LumiToGPT\logs"
+$LogPath = Join-Path $LogRoot "install-$InstallRunId.log"
+$CurrentStep = "설치 준비"
+$TranscriptStarted = $false
+
+function Set-InstallStep([string]$Step) {
+    $script:CurrentStep = $Step
+    Write-Host ""
+    Write-Host "[$Step]"
+}
+
+function Invoke-BridgeSetup([string]$Executable, [string]$Argument, [string]$Label) {
+    $safeLabel = $Label -replace '[^A-Za-z0-9_-]', '-'
+    $stdoutPath = Join-Path $LogRoot "$InstallRunId-$safeLabel.stdout.log"
+    $stderrPath = Join-Path $LogRoot "$InstallRunId-$safeLabel.stderr.log"
+    $process = Start-Process -FilePath $Executable -ArgumentList $Argument -Wait -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    if ($process.ExitCode -eq 0) {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        return
+    }
+    $details = @(Get-Content -LiteralPath $stderrPath -Tail 40 -ErrorAction SilentlyContinue) -join " | "
+    if (-not $details) {
+        $details = @(Get-Content -LiteralPath $stdoutPath -Tail 40 -ErrorAction SilentlyContinue) -join " | "
+    }
+    if (-not $details) { $details = "추가 출력 없음" }
+    throw "$Label 실패 (종료 코드 $($process.ExitCode)): $details"
 }
 
 function Find-LittleLumiApp {
@@ -140,6 +171,28 @@ function Resolve-VoiceWeightsArchive([string]$RequestedPath, [string]$DataRoot) 
     return $archive
 }
 
+function Resolve-CodexAppServerArchive([string]$RequestedPath, [string]$DataRoot) {
+    if ($RequestedPath) {
+        $resolved = [IO.Path]::GetFullPath($RequestedPath)
+        if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+            throw "Codex App Server 압축 파일을 찾지 못했습니다: $resolved"
+        }
+        return $resolved
+    }
+
+    $downloadRoot = Join-Path $DataRoot "downloads"
+    $archive = Join-Path $downloadRoot "codex-app-server-$CodexAppServerVersion-windows-x64.zip"
+    if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+        Write-Host "공식 Codex App Server를 내려받습니다. 약 75MB입니다."
+        Save-Download $CodexAppServerUrl $archive "Codex App Server 다운로드에 실패했습니다."
+    }
+    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+    if ($actualHash -ne $CodexAppServerSha256) {
+        throw "Codex App Server 압축 파일의 SHA-256이 올바르지 않습니다: $archive"
+    }
+    return $archive
+}
+
 function Find-PreferredFile([string]$Root, [string]$PreferredName, [string]$Filter) {
     $files = @(Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $Filter -ErrorAction SilentlyContinue)
     $preferred = $files | Where-Object Name -eq $PreferredName | Select-Object -First 1
@@ -172,6 +225,30 @@ function Find-ReferenceVoice([string]$LumiApp, [string]$Audio, [string]$Text) {
         }
     }
     throw "참조 음성을 찾지 못했습니다. LUMI Voice Pack을 설치하거나 -ReferenceAudio와 -ReferenceText를 지정해 주세요."
+}
+
+function Install-CodexAppServer([string]$Target, [string]$DataRoot) {
+    $targetExecutable = Join-Path $Target "codex-app-server.exe"
+    $versionMarker = Join-Path $Target "codex-app-server.version"
+    if ((Test-Path -LiteralPath $targetExecutable -PathType Leaf) -and
+        (Test-Path -LiteralPath $versionMarker -PathType Leaf) -and
+        ((Get-Content -LiteralPath $versionMarker -Raw).Trim() -eq $CodexAppServerVersion)) {
+        return $targetExecutable
+    }
+
+    $archive = Resolve-CodexAppServerArchive $CodexAppServerArchive $DataRoot
+    $extractRoot = Join-Path $DataRoot "downloads\codex-app-server-$CodexAppServerVersion"
+    $sourceExecutable = Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Filter "codex-app-server-x86_64-pc-windows-msvc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $sourceExecutable) {
+        Expand-SafeArchive $archive $extractRoot
+        $sourceExecutable = Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Filter "codex-app-server-x86_64-pc-windows-msvc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $sourceExecutable) {
+        throw "압축 파일에서 Codex App Server 실행 파일을 찾지 못했습니다."
+    }
+    Copy-Item -LiteralPath $sourceExecutable.FullName -Destination $targetExecutable -Force
+    Set-Content -LiteralPath $versionMarker -Encoding Ascii -Value $CodexAppServerVersion
+    return $targetExecutable
 }
 
 function Install-GptSovits([string]$LumiApp, [string]$DataRoot) {
@@ -231,6 +308,19 @@ function Get-ZipEntryText([IO.Compression.ZipArchiveEntry]$Entry) {
     finally {
         $reader.Dispose()
         $stream.Dispose()
+    }
+}
+
+function Test-LittleLumiPatchInstalled([string]$LumiApp) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $targetJar = Join-Path $LumiApp "Shimeji-ee.jar"
+    try {
+        $archive = [IO.Compression.ZipFile]::OpenRead($targetJar)
+        try { return $null -ne $archive.GetEntry("META-INF/lumi-to-gpt-patch.properties") }
+        finally { $archive.Dispose() }
+    }
+    catch {
+        return $false
     }
 }
 
@@ -319,82 +409,149 @@ function Install-LittleLumiPatch([string]$LumiApp) {
     }
 }
 
-$ResolvedTargetRoot = [IO.Path]::GetFullPath($TargetRoot)
-New-Item -ItemType Directory -Force -Path $ResolvedTargetRoot | Out-Null
-$BridgeExecutable = Join-Path $ResolvedTargetRoot "lumi-to-gpt.exe"
-Copy-Item -LiteralPath $BridgeSource -Destination $BridgeExecutable -Force
-Copy-Item -LiteralPath (Join-Path $SourceRoot "README.md") -Destination $ResolvedTargetRoot -Force
+$InstallExitCode = 0
+$CodexCommand = $null
+try {
+    New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+    [IO.File]::WriteAllText($LogPath, "", [Text.UTF8Encoding]::new($true))
+    Start-Transcript -LiteralPath $LogPath -Append -Force | Out-Null
+    $TranscriptStarted = $true
+    Write-Host "LUMI to GPT 설치 로그"
+    Write-Host "모드: $InstallMode"
+    Write-Host "로그: $LogPath"
 
-$LumiApp = Find-LittleLumiApp
-if (-not $SkipLumiPatch) {
-    Install-LittleLumiPatch $LumiApp
-}
-
-$ConfigureProcess = Start-Process -FilePath $BridgeExecutable -ArgumentList "--configure-lumi-chat" -Wait -PassThru -WindowStyle Hidden
-if ($ConfigureProcess.ExitCode -ne 0) {
-    throw "필수 창작마당 항목 'LUMI Chat'을 구독하고 Little LUMI를 한 번 실행한 뒤 다시 설치해 주세요."
-}
-
-if ($InstallMode -eq "WithTts") {
-    $voice = Install-GptSovits $LumiApp $TtsDataRoot
-    $environmentNames = @(
-        "LUMI_TTS_RUNTIME",
-        "LUMI_TTS_GPT_WEIGHTS",
-        "LUMI_TTS_SOVITS_WEIGHTS",
-        "LUMI_TTS_REFERENCE_AUDIO",
-        "LUMI_TTS_REFERENCE_TEXT"
-    )
-    $previousEnvironment = @{}
-    foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
-    try {
-        $env:LUMI_TTS_RUNTIME = $voice.Runtime
-        $env:LUMI_TTS_GPT_WEIGHTS = $voice.GptWeight
-        $env:LUMI_TTS_SOVITS_WEIGHTS = $voice.SovitsWeight
-        $env:LUMI_TTS_REFERENCE_AUDIO = $voice.ReferenceAudio
-        $env:LUMI_TTS_REFERENCE_TEXT = $voice.ReferenceText
-        $VoiceProcess = Start-Process -FilePath $BridgeExecutable -ArgumentList "--configure-gpt-sovits" -Wait -PassThru -WindowStyle Hidden
-        if ($VoiceProcess.ExitCode -ne 0) { throw "GPT-SoVITS 설정 적용에 실패했습니다." }
-    }
-    finally {
-        foreach ($name in $environmentNames) {
-            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+    Set-InstallStep "애드온 파일 확인"
+    $ResolvedTargetRoot = [IO.Path]::GetFullPath($TargetRoot)
+    $BridgeExecutable = Join-Path $ResolvedTargetRoot "lumi-to-gpt.exe"
+    if ($InstallMode -eq "TtsOnly") {
+        if (-not (Test-Path -LiteralPath $BridgeExecutable -PathType Leaf)) {
+            throw "기존 LUMI to GPT 설치를 찾지 못했습니다: $BridgeExecutable. 먼저 1번 또는 2번으로 애드온을 설치해 주세요."
         }
     }
-}
+    else {
+        if (-not (Test-Path -LiteralPath $BridgeSource -PathType Leaf)) {
+            throw "설치 파일이 없습니다: $BridgeSource"
+        }
+        New-Item -ItemType Directory -Force -Path $ResolvedTargetRoot | Out-Null
+        Copy-Item -LiteralPath $BridgeSource -Destination $BridgeExecutable -Force
+        Copy-Item -LiteralPath (Join-Path $SourceRoot "README.md") -Destination $ResolvedTargetRoot -Force
 
-$CodexCommand = Get-Command codex -ErrorAction SilentlyContinue
-if (-not $SkipMcp -and $CodexCommand) {
-    & $CodexCommand.Source mcp get lumi *> $null
-    if ($LASTEXITCODE -eq 0) {
-        & $CodexCommand.Source mcp remove lumi
-        if ($LASTEXITCODE -ne 0) { throw "기존 Codex MCP 제거에 실패했습니다." }
+        Set-InstallStep "Codex App Server 설치"
+        Install-CodexAppServer $ResolvedTargetRoot ([IO.Path]::GetFullPath($TtsDataRoot)) | Out-Null
     }
-    & $CodexCommand.Source mcp add lumi -- $BridgeExecutable --mcp
-    if ($LASTEXITCODE -ne 0) { throw "Codex MCP 등록에 실패했습니다." }
+
+    Set-InstallStep "Little LUMI 확인"
+    $LumiApp = Find-LittleLumiApp
+    if ($InstallMode -eq "TtsOnly") {
+        if (-not $SkipLumiPatch -and -not (Test-LittleLumiPatchInstalled $LumiApp)) {
+            throw "Little LUMI 연동 패치가 설치되어 있지 않습니다. 먼저 1번 또는 2번으로 애드온을 설치해 주세요."
+        }
+    }
+    elseif (-not $SkipLumiPatch) {
+        Set-InstallStep "Little LUMI 연동 패치"
+        Install-LittleLumiPatch $LumiApp
+    }
+
+    if ($InstallMode -ne "TtsOnly") {
+        Set-InstallStep "LUMI Chat 연결 설정"
+        Invoke-BridgeSetup $BridgeExecutable "--configure-lumi-chat" "LUMI Chat 연결 설정"
+    }
+
+    if ($InstallMode -in @("WithTts", "TtsOnly")) {
+        Set-InstallStep "GPT-SoVITS와 LUMI 음성 설치"
+        $voice = Install-GptSovits $LumiApp $TtsDataRoot
+        $environmentNames = @(
+            "LUMI_TTS_RUNTIME",
+            "LUMI_TTS_GPT_WEIGHTS",
+            "LUMI_TTS_SOVITS_WEIGHTS",
+            "LUMI_TTS_REFERENCE_AUDIO",
+            "LUMI_TTS_REFERENCE_TEXT"
+        )
+        $previousEnvironment = @{}
+        foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
+        try {
+            $env:LUMI_TTS_RUNTIME = $voice.Runtime
+            $env:LUMI_TTS_GPT_WEIGHTS = $voice.GptWeight
+            $env:LUMI_TTS_SOVITS_WEIGHTS = $voice.SovitsWeight
+            $env:LUMI_TTS_REFERENCE_AUDIO = $voice.ReferenceAudio
+            $env:LUMI_TTS_REFERENCE_TEXT = $voice.ReferenceText
+            Set-InstallStep "GPT-SoVITS 설정 적용"
+            Invoke-BridgeSetup $BridgeExecutable "--configure-gpt-sovits" "GPT-SoVITS 설정 적용"
+        }
+        finally {
+            foreach ($name in $environmentNames) {
+                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+            }
+        }
+    }
+
+    if ($InstallMode -ne "TtsOnly") {
+        Set-InstallStep "Codex MCP 등록"
+        $CodexCommand = Get-Command codex -ErrorAction SilentlyContinue
+        if (-not $SkipMcp -and $CodexCommand) {
+            & $CodexCommand.Source mcp get lumi *> $null
+            if ($LASTEXITCODE -eq 0) {
+                & $CodexCommand.Source mcp remove lumi
+                if ($LASTEXITCODE -ne 0) { throw "기존 Codex MCP 제거에 실패했습니다." }
+            }
+            & $CodexCommand.Source mcp add lumi -- $BridgeExecutable --mcp
+            if ($LASTEXITCODE -ne 0) { throw "Codex MCP 등록에 실패했습니다." }
+        }
+
+        if (-not $SkipShortcut) {
+            Set-InstallStep "바탕화면 바로가기 생성"
+            $ShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "LUMI to GPT.lnk"
+            $Shell = New-Object -ComObject WScript.Shell
+            $Shortcut = $Shell.CreateShortcut($ShortcutPath)
+            $Shortcut.TargetPath = $BridgeExecutable
+            $Shortcut.WorkingDirectory = $ResolvedTargetRoot
+            $Shortcut.Description = "Little LUMI를 ChatGPT 계정에 연결"
+            $Shortcut.Save()
+        }
+    }
+
+    Set-InstallStep "설치 완료"
+    Write-Host "설치 폴더: $ResolvedTargetRoot"
+    if ($InstallMode -eq "TtsOnly") {
+        Write-Host "GPT-SoVITS와 LUMI 음성만 추가했습니다."
+        Write-Host "Little LUMI를 다시 시작하고 루미 AI 설정의 목소리 탭을 확인하세요."
+    }
+    else {
+        Write-Host "1. Little LUMI를 다시 시작하세요."
+        Write-Host "2. 바탕화면의 'LUMI to GPT'를 실행하세요."
+        Write-Host "3. 계정 연결 창에서 'ChatGPT 계정 연결'을 누르고 브라우저 로그인을 완료하세요."
+        Write-Host "4. Little LUMI의 '루미 AI 설정'에서 두뇌는 'ChatGPT (OAuth)'를 확인하세요."
+        Write-Host "5. 기본 모델은 GPT-5.6 Luna이며 혼잣말과 화면 구경은 처음부터 꺼져 있습니다."
+        Write-Host "6. 꼬미를 더블클릭하거나 우클릭 -> '말 걸기'로 대화하세요."
+        if ($InstallMode -eq "WithTts") {
+            Write-Host "GPT-SoVITS와 LUMI 음성 설정도 적용했습니다."
+        }
+        if ($CodexCommand -and -not $SkipMcp) {
+            Write-Host "7. Codex 앱을 재시작하면 완료 알림 MCP가 적용됩니다."
+        }
+    }
+    Write-Host "상세 로그: $LogPath"
+}
+catch {
+    $InstallExitCode = 1
+    $failure = $_
+    Write-Host ""
+    Write-Host "설치에 실패했습니다." -ForegroundColor Red
+    Write-Host "실패 단계: $CurrentStep" -ForegroundColor Red
+    Write-Host "오류: $($failure.Exception.Message)" -ForegroundColor Red
+    Write-Host "오류 종류: $($failure.Exception.GetType().FullName)"
+    if ($failure.InvocationInfo.PositionMessage) {
+        Write-Host "발생 위치: $($failure.InvocationInfo.PositionMessage)"
+    }
+    if ($failure.ScriptStackTrace) {
+        Write-Host "스크립트 호출 경로: $($failure.ScriptStackTrace)"
+    }
+    Write-Host "상세 로그: $LogPath" -ForegroundColor Yellow
+}
+finally {
+    if ($TranscriptStarted) {
+        try { Stop-Transcript | Out-Null } catch {}
+    }
 }
 
-if (-not $SkipShortcut) {
-    $ShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "LUMI to GPT.lnk"
-    $Shell = New-Object -ComObject WScript.Shell
-    $Shortcut = $Shell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = $BridgeExecutable
-    $Shortcut.WorkingDirectory = $ResolvedTargetRoot
-    $Shortcut.Description = "Little LUMI를 ChatGPT 웹에 연결"
-    $Shortcut.Save()
-}
-
-Write-Host ""
-Write-Host "LUMI to GPT 설치를 완료했습니다."
-Write-Host "설치 폴더: $ResolvedTargetRoot"
-Write-Host "1. Little LUMI를 다시 시작하세요."
-Write-Host "2. 바탕화면의 'LUMI to GPT'를 실행하세요."
-Write-Host "3. 열린 ChatGPT 창에서 한 번 로그인하세요."
-Write-Host "4. ChatGPT에서 LUMI 프로젝트를 만들고 오른쪽 위 'LUMI 프로젝트'에서 연결하세요."
-Write-Host "5. Little LUMI의 '루미 AI 설정'에서 두뇌는 'GPT Web', 목소리는 'GPT-SoVITS'를 선택하세요."
-Write-Host "6. 꼬미를 더블클릭하거나 우클릭 -> '말 걸기'로 대화하세요."
-if ($InstallMode -eq "WithTts") {
-    Write-Host "GPT-SoVITS와 LUMI 음성 설정도 적용했습니다."
-}
-if ($CodexCommand -and -not $SkipMcp) {
-    Write-Host "7. Codex 앱을 재시작하면 완료 알림 MCP가 적용됩니다."
-}
+if ($InstallExitCode -ne 0) { exit $InstallExitCode }

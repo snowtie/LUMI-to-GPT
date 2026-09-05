@@ -2,16 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,11 +21,17 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use uuid::Uuid;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "0.9.0";
+const VERSION: &str = "1.0.0";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
+const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-luna";
+const DEFAULT_CODEX_EFFORT: &str = "low";
+const LATEST_RELEASE_URL: &str = "https://github.com/snowtie/LUMI-to-GPT/releases/latest";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(190);
 const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_AUDIO_BYTES: u64 = 64 * 1024 * 1024;
@@ -292,10 +298,18 @@ fn configure_lumi_chat(settings: &Settings) -> AppResult<PathBuf> {
     let mut updates = vec![
         ("llm.provider".to_owned(), "gpt_web".to_owned()),
         ("llm.base.gpt_web".to_owned(), base_url),
-        ("llm.model.gpt_web".to_owned(), "chatgpt-web".to_owned()),
+        (
+            "llm.model.gpt_web".to_owned(),
+            DEFAULT_CODEX_MODEL.to_owned(),
+        ),
     ];
     if !has_gpt_web_key {
         updates.push(("llm.key.gpt_web".to_owned(), "lumi-to-gpt".to_owned()));
+    }
+    for key in ["chatter.enabled", "screenwatch.enabled"] {
+        if property_value(&ai_settings, key).is_none() {
+            updates.push((key.to_owned(), "false".to_owned()));
+        }
     }
     for (key, value) in [
         ("tts.gpt_sovits.base", settings.voice.base_url.as_str()),
@@ -1201,130 +1215,357 @@ fn write_lumi_message(app_dir: &Path, text: &str) -> AppResult<PathBuf> {
     Ok(target)
 }
 
-#[derive(Debug)]
-struct JobResult {
-    text: Option<String>,
-    error: Option<String>,
+struct CodexAppServer {
+    child: Child,
+    input: ChildStdin,
+    messages: Receiver<Value>,
+    pending: VecDeque<Value>,
+    next_id: u64,
 }
 
-struct BridgeJob {
-    prompt: String,
-    images: Vec<String>,
-    dispatched_at: Option<Instant>,
-    sender: Sender<JobResult>,
+impl CodexAppServer {
+    fn spawn() -> AppResult<Self> {
+        let (executable, arguments) = codex_app_server_command()?;
+        let workspace = local_data_dir().join("codex-workspace");
+        let codex_home = local_data_dir().join("codex-home");
+        fs::create_dir_all(&workspace)?;
+        fs::create_dir_all(&codex_home)?;
+
+        let mut command = Command::new(&executable);
+        command
+            .args(arguments)
+            .current_dir(workspace)
+            .env("CODEX_HOME", codex_home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+
+        let mut child = command.spawn().map_err(|error| {
+            format!(
+                "Codex App Server를 실행하지 못했습니다: {} ({error}). 설치기를 다시 실행해 주세요.",
+                executable.display()
+            )
+        })?;
+        let input = child
+            .stdin
+            .take()
+            .ok_or("Codex App Server stdin을 열지 못했습니다.")?;
+        let output = child
+            .stdout
+            .take()
+            .ok_or("Codex App Server stdout을 열지 못했습니다.")?;
+        let (sender, messages) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(output).lines().map_while(Result::ok) {
+                if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                    if sender.send(message).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut client = Self {
+            child,
+            input,
+            messages,
+            pending: VecDeque::new(),
+            next_id: 0,
+        };
+        client.request(
+            "initialize",
+            json!({
+                "clientInfo": {
+                    "name": "lumi_to_gpt",
+                    "title": APP_NAME,
+                    "version": VERSION
+                }
+            }),
+            Duration::from_secs(30),
+        )?;
+        client.send(json!({"method":"initialized","params":{}}))?;
+        Ok(client)
+    }
+
+    fn send(&mut self, message: Value) -> AppResult<()> {
+        serde_json::to_writer(&mut self.input, &message)?;
+        self.input.write_all(b"\n")?;
+        self.input.flush()?;
+        Ok(())
+    }
+
+    fn receive_until(&self, deadline: Instant) -> AppResult<Value> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or("Codex App Server 응답 시간이 초과되었습니다.")?;
+        self.messages
+            .recv_timeout(remaining)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "Codex App Server 응답 시간이 초과되었습니다.".into()
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "Codex App Server 연결이 종료되었습니다.".into()
+                }
+            })
+    }
+
+    fn request(&mut self, method: &str, params: Value, timeout: Duration) -> AppResult<Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(json!({"method":method,"id":id,"params":params}))?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let message = self.receive_until(deadline)?;
+            if message.get("method").is_none() && message.get("id") == Some(&json!(id)) {
+                if let Some(error) = message.get("error") {
+                    let text = error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Codex App Server 요청이 실패했습니다.");
+                    return Err(text.to_owned().into());
+                }
+                return Ok(message.get("result").cloned().unwrap_or(Value::Null));
+            }
+            if message.get("method").is_some() && message.get("id").is_some() {
+                self.send(json!({
+                    "id": message["id"].clone(),
+                    "error": {"code":-32601,"message":"LUMI to GPT에서 지원하지 않는 요청입니다."}
+                }))?;
+                continue;
+            }
+            if matches!(
+                message.get("method").and_then(Value::as_str),
+                Some("item/completed" | "turn/completed")
+            ) {
+                self.pending.push_back(message);
+            }
+        }
+    }
+
+    fn account(&mut self) -> AppResult<Value> {
+        self.request(
+            "account/read",
+            json!({"refreshToken":false}),
+            Duration::from_secs(30),
+        )
+    }
+
+    fn account_status(&mut self) -> AppResult<Value> {
+        let result = self.account()?;
+        let account = result.get("account").cloned().unwrap_or(Value::Null);
+        let connected = account.get("type").and_then(Value::as_str) == Some("chatgpt");
+        Ok(json!({
+            "connected": connected,
+            "account": account,
+            "model": DEFAULT_CODEX_MODEL,
+            "effort": DEFAULT_CODEX_EFFORT,
+            "backend": "codex_app_server"
+        }))
+    }
+
+    fn start_login(&mut self) -> AppResult<Value> {
+        self.request(
+            "account/login/start",
+            json!({"type":"chatgptDeviceCode"}),
+            Duration::from_secs(30),
+        )
+    }
+
+    fn logout(&mut self) -> AppResult<Value> {
+        self.request("account/logout", json!({}), Duration::from_secs(30))?;
+        Ok(json!({"ok":true}))
+    }
+
+    fn complete(&mut self, model: &str, prompt: String, images: Vec<String>) -> AppResult<String> {
+        let account = self.account()?;
+        if account["account"]["type"].as_str() != Some("chatgpt") {
+            return Err(
+                "ChatGPT 계정 연결이 필요합니다. LUMI to GPT 창에서 계정을 연결해 주세요.".into(),
+            );
+        }
+
+        self.pending.clear();
+        let model = match model.trim() {
+            "" | "chatgpt-web" => DEFAULT_CODEX_MODEL,
+            configured => configured,
+        };
+        let workspace = local_data_dir().join("codex-workspace");
+        let thread = self.request(
+            "thread/start",
+            json!({
+                "model": model,
+                "cwd": workspace,
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+                "personality": "none",
+                "ephemeral": true,
+                "serviceName": "lumi_to_gpt",
+                "developerInstructions": "You are the conversation backend for the LUMI desktop mascot. Follow the character and conversation instructions inside the user's message. Return only the final Korean dialogue text for one speech bubble. Do not use tools, inspect files, run commands, browse, or explain your process."
+            }),
+            Duration::from_secs(30),
+        )?;
+        let thread_id = thread["thread"]["id"]
+            .as_str()
+            .ok_or("Codex 대화 ID를 받지 못했습니다.")?
+            .to_owned();
+        let mut input = vec![json!({"type":"text","text":prompt})];
+        for image in images {
+            input.push(json!({"type":"image","url":image,"detail":"low"}));
+        }
+        let turn = self.request(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "input": input,
+                "model": model,
+                "effort": DEFAULT_CODEX_EFFORT,
+                "summary": "none",
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type":"readOnly","networkAccess":false}
+            }),
+            Duration::from_secs(30),
+        )?;
+        let turn_id = turn["turn"]["id"]
+            .as_str()
+            .ok_or("Codex 응답 작업 ID를 받지 못했습니다.")?
+            .to_owned();
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let mut final_text = String::new();
+        loop {
+            let message = match self.pending.pop_front() {
+                Some(message) => message,
+                None => self.receive_until(deadline)?,
+            };
+            let method = message.get("method").and_then(Value::as_str);
+            let params = &message["params"];
+            if params.get("threadId").and_then(Value::as_str) != Some(thread_id.as_str()) {
+                continue;
+            }
+            if method == Some("item/completed")
+                && params.get("turnId").and_then(Value::as_str) == Some(turn_id.as_str())
+                && params["item"]["type"].as_str() == Some("agentMessage")
+            {
+                if let Some(text) = params["item"]["text"].as_str() {
+                    final_text = text.to_owned();
+                }
+                continue;
+            }
+            if method != Some("turn/completed") || params["turn"]["id"].as_str() != Some(&turn_id) {
+                continue;
+            }
+            if params["turn"]["status"].as_str() != Some("completed") {
+                let message = params["turn"]["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Codex 응답 생성이 실패했습니다.");
+                return Err(message.to_owned().into());
+            }
+            if final_text.trim().is_empty() {
+                final_text = params["turn"]["items"]
+                    .as_array()
+                    .and_then(|items| {
+                        items.iter().rev().find_map(|item| {
+                            (item["type"].as_str() == Some("agentMessage"))
+                                .then(|| item["text"].as_str())
+                                .flatten()
+                        })
+                    })
+                    .unwrap_or_default()
+                    .to_owned();
+            }
+            let final_text = final_text.trim();
+            if final_text.is_empty() {
+                return Err("ChatGPT 응답이 비어 있습니다.".into());
+            }
+            return Ok(final_text.to_owned());
+        }
+    }
 }
 
-#[derive(Clone, Serialize)]
-struct ClaimedJob {
-    id: String,
-    prompt: String,
-    images: Vec<String>,
+impl Drop for CodexAppServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
-#[derive(Default)]
-struct BridgeInner {
-    jobs: HashMap<String, BridgeJob>,
-    pending: VecDeque<String>,
-    browser_last_seen: Option<Instant>,
+fn codex_app_server_command() -> AppResult<(PathBuf, Vec<String>)> {
+    if let Some(executable) = env::var_os("LUMI_CODEX_APP_SERVER").map(PathBuf::from) {
+        let arguments = env::var("LUMI_CODEX_APP_SERVER_ARGS")
+            .ok()
+            .map(|value| serde_json::from_str::<Vec<String>>(&value))
+            .transpose()
+            .map_err(|error| format!("LUMI_CODEX_APP_SERVER_ARGS가 올바르지 않습니다: {error}"))?
+            .unwrap_or_else(|| codex_default_arguments(&executable));
+        return Ok((executable, arguments));
+    }
+    if let Ok(current) = env::current_exe() {
+        if let Some(parent) = current.parent() {
+            let bundled = parent.join("codex-app-server.exe");
+            if bundled.is_file() {
+                return Ok((bundled, Vec::new()));
+            }
+        }
+    }
+    Ok((PathBuf::from("codex"), vec!["app-server".to_owned()]))
+}
+
+fn codex_default_arguments(executable: &Path) -> Vec<String> {
+    let name = executable
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if name.starts_with("codex-app-server") {
+        Vec::new()
+    } else {
+        vec!["app-server".to_owned()]
+    }
 }
 
 #[derive(Clone, Default)]
-struct BridgeState {
-    inner: Arc<Mutex<BridgeInner>>,
+struct CodexState {
+    client: Arc<Mutex<Option<CodexAppServer>>>,
 }
 
-impl BridgeState {
-    fn create_job(&self, prompt: String, images: Vec<String>) -> (String, Receiver<JobResult>) {
-        let id = Uuid::new_v4().simple().to_string();
-        let (sender, receiver) = mpsc::channel();
-        let job = BridgeJob {
-            prompt,
-            images,
-            dispatched_at: None,
-            sender,
-        };
-        let mut inner = self.inner.lock().expect("bridge state poisoned");
-        inner.pending.push_back(id.clone());
-        inner.jobs.insert(id.clone(), job);
-        (id, receiver)
-    }
-
-    fn claim_job(&self) -> Option<ClaimedJob> {
-        let now = Instant::now();
-        let mut inner = self.inner.lock().expect("bridge state poisoned");
-        inner.browser_last_seen = Some(now);
-
-        let stale = inner
-            .jobs
-            .iter()
-            .filter_map(|(id, job)| {
-                job.dispatched_at
-                    .filter(|sent| now.duration_since(*sent) > Duration::from_secs(30))
-                    .map(|_| id.clone())
-            })
-            .collect::<Vec<_>>();
-        for id in stale.into_iter().rev() {
-            if !inner.pending.contains(&id) {
-                if let Some(job) = inner.jobs.get_mut(&id) {
-                    job.dispatched_at = None;
-                }
-                inner.pending.push_front(id);
-            }
-        }
-
-        while let Some(id) = inner.pending.pop_front() {
-            if let Some(job) = inner.jobs.get_mut(&id) {
-                job.dispatched_at = Some(now);
-                return Some(ClaimedJob {
-                    id,
-                    prompt: job.prompt.clone(),
-                    images: job.images.clone(),
-                });
-            }
-        }
-        None
-    }
-
-    fn finish_job(&self, id: &str, text: Option<&str>, error: Option<&str>) -> bool {
-        let job = self
-            .inner
+impl CodexState {
+    fn with_client<T>(
+        &self,
+        operation: impl FnOnce(&mut CodexAppServer) -> AppResult<T>,
+    ) -> AppResult<T> {
+        let mut client = self
+            .client
             .lock()
-            .expect("bridge state poisoned")
-            .jobs
-            .remove(id);
-        let Some(job) = job else { return false };
-        let text = text
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let mut error = error
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        if text.is_none() && error.is_none() {
-            error = Some("ChatGPT 응답이 비어 있습니다.".to_owned());
+            .map_err(|_| "Codex App Server 잠금이 손상되었습니다.")?;
+        if client.is_none() {
+            *client = Some(CodexAppServer::spawn()?);
         }
-        job.sender.send(JobResult { text, error }).is_ok()
+        let result = operation(client.as_mut().expect("Codex client initialized"));
+        if result.is_err() {
+            client.take();
+        }
+        result
     }
 
-    fn cancel_job(&self, id: &str) {
-        self.inner
-            .lock()
-            .expect("bridge state poisoned")
-            .jobs
-            .remove(id);
+    fn account_status(&self) -> AppResult<Value> {
+        self.with_client(CodexAppServer::account_status)
     }
 
-    fn health(&self) -> Value {
-        let inner = self.inner.lock().expect("bridge state poisoned");
-        let age = inner
-            .browser_last_seen
-            .map(|seen| seen.elapsed().as_secs_f32());
-        json!({
-            "browser_online": age.is_some_and(|seconds| seconds < 5.0),
-            "browser_last_seen_seconds": age.map(|seconds| (seconds * 10.0).round() / 10.0),
-            "pending_jobs": inner.jobs.len()
-        })
+    fn start_login(&self) -> AppResult<Value> {
+        self.with_client(CodexAppServer::start_login)
+    }
+
+    fn logout(&self) -> AppResult<Value> {
+        self.with_client(CodexAppServer::logout)
+    }
+
+    fn complete(&self, model: &str, prompt: String, images: Vec<String>) -> AppResult<String> {
+        self.with_client(|client| client.complete(model, prompt, images))
+    }
+
+    fn running(&self) -> bool {
+        self.client.lock().is_ok_and(|client| client.is_some())
     }
 }
 
@@ -1361,7 +1602,7 @@ fn content_to_text_and_images(content: &Value) -> (String, Vec<String>) {
     (texts.join("\n"), images)
 }
 
-fn build_browser_prompt(messages: &Value) -> AppResult<(String, Vec<String>)> {
+fn build_codex_prompt(messages: &Value) -> AppResult<(String, Vec<String>)> {
     let messages = messages.as_array().ok_or("messages 배열이 필요합니다.")?;
     let mut normalized = Vec::new();
     let mut images = Vec::new();
@@ -1435,10 +1676,7 @@ fn allowed_origin(request: &Request) -> Option<String> {
         .as_str();
     matches!(
         origin,
-        "https://chatgpt.com"
-            | "http://tauri.localhost"
-            | "https://tauri.localhost"
-            | "tauri://localhost"
+        "http://tauri.localhost" | "https://tauri.localhost" | "tauri://localhost"
     )
     .then(|| origin.to_owned())
 }
@@ -1446,10 +1684,7 @@ fn allowed_origin(request: &Request) -> Option<String> {
 fn with_common_headers<R: Read>(response: Response<R>, origin: Option<&str>) -> Response<R> {
     let response = response
         .with_header(header("Access-Control-Allow-Methods", "GET, POST, OPTIONS"))
-        .with_header(header(
-            "Access-Control-Allow-Headers",
-            "Content-Type, X-Lumi-Token",
-        ))
+        .with_header(header("Access-Control-Allow-Headers", "Content-Type"))
         .with_header(header("Access-Control-Allow-Private-Network", "true"))
         .with_header(header("Cache-Control", "no-store"));
     match origin {
@@ -1483,13 +1718,6 @@ fn respond_empty(request: Request, status: u16) {
     let _ = request.respond(with_common_headers(response, origin.as_deref()));
 }
 
-fn has_bridge_token(request: &Request, expected: &str) -> bool {
-    request
-        .headers()
-        .iter()
-        .any(|item| item.field.equiv("X-Lumi-Token") && item.value.as_str() == expected)
-}
-
 fn read_json(request: &mut Request) -> AppResult<Value> {
     let body_length = request.body_length().unwrap_or_default() as u64;
     if body_length == 0 || body_length > MAX_BODY_BYTES {
@@ -1503,8 +1731,7 @@ fn read_json(request: &mut Request) -> AppResult<Value> {
 #[derive(Clone)]
 struct HttpContext {
     settings: Settings,
-    state: BridgeState,
-    bridge_token: String,
+    state: CodexState,
     stop: Arc<AtomicBool>,
 }
 
@@ -1515,13 +1742,24 @@ fn handle_request(mut request: Request, context: HttpContext) {
         .next()
         .unwrap_or(request.url())
         .to_owned();
+    let has_origin = request
+        .headers()
+        .iter()
+        .any(|item| item.field.equiv("Origin"));
+    if has_origin && allowed_origin(&request).is_none() {
+        respond_json(
+            request,
+            403,
+            json!({"error":"허용되지 않은 요청 출처입니다."}),
+        );
+        return;
+    }
     if request.method() == &Method::Options {
         respond_empty(request, 204);
         return;
     }
 
     if request.method() == &Method::Get && path == "/health" {
-        let health = context.state.health();
         respond_json(
             request,
             200,
@@ -1532,12 +1770,18 @@ fn handle_request(mut request: Request, context: HttpContext) {
                 "lumi_found": is_lumi_app_dir(&lumi_app_dir(&context.settings)),
                 "lumi_chat_found": is_lumi_chat_unlocked(&lumi_app_dir(&context.settings)),
                 "lumi_app_dir": lumi_app_dir(&context.settings),
-                "browser_online": health["browser_online"],
-                "browser_last_seen_seconds": health["browser_last_seen_seconds"],
-                "pending_jobs": health["pending_jobs"],
+                "codex_process_started": context.state.running(),
+                "model": DEFAULT_CODEX_MODEL,
                 "pending_voice": 0
             }),
         );
+        return;
+    }
+    if request.method() == &Method::Get && path == "/auth/status" {
+        match context.state.account_status() {
+            Ok(status) => respond_json(request, 200, status),
+            Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+        }
         return;
     }
     if request.method() == &Method::Get && path == "/v1/models" {
@@ -1545,24 +1789,9 @@ fn handle_request(mut request: Request, context: HttpContext) {
             request,
             200,
             json!({"object":"list","data":[{
-                "id":"chatgpt-web","object":"model","created":0,"owned_by":"lumi-to-gpt"
+                "id":DEFAULT_CODEX_MODEL,"object":"model","created":0,"owned_by":"openai-codex"
             }]}),
         );
-        return;
-    }
-    if request.method() == &Method::Get && path == "/bridge/next" {
-        if !has_bridge_token(&request, &context.bridge_token) {
-            respond_json(request, 403, json!({"error":"forbidden"}));
-            return;
-        }
-        match context.state.claim_job() {
-            Some(job) => respond_json(
-                request,
-                200,
-                json!({"id":job.id,"prompt":job.prompt,"images":job.images}),
-            ),
-            None => respond_empty(request, 204),
-        }
         return;
     }
 
@@ -1583,28 +1812,16 @@ fn handle_request(mut request: Request, context: HttpContext) {
     };
 
     match path.as_str() {
-        "/bridge/result" => {
-            if !has_bridge_token(&request, &context.bridge_token) {
-                respond_json(request, 403, json!({"error":"forbidden"}));
-                return;
-            }
-            let id = payload
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let text = payload.get("text").and_then(Value::as_str);
-            let accepted =
-                context
-                    .state
-                    .finish_job(id, text, payload.get("error").and_then(Value::as_str));
-            respond_json(
-                request,
-                if accepted { 200 } else { 404 },
-                json!({"ok":accepted}),
-            );
-        }
+        "/auth/login" => match context.state.start_login() {
+            Ok(result) => respond_json(request, 200, result),
+            Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+        },
+        "/auth/logout" => match context.state.logout() {
+            Ok(result) => respond_json(request, 200, result),
+            Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+        },
         "/v1/chat/completions" => {
-            let (prompt, images) = match build_browser_prompt(&payload["messages"]) {
+            let (prompt, images) = match build_codex_prompt(&payload["messages"]) {
                 Ok(value) => value,
                 Err(error) => {
                     respond_json(request, 400, json!({"error":{"message":error.to_string()}}));
@@ -1614,14 +1831,11 @@ fn handle_request(mut request: Request, context: HttpContext) {
             let model = payload
                 .get("model")
                 .and_then(Value::as_str)
-                .unwrap_or("chatgpt-web")
+                .unwrap_or(DEFAULT_CODEX_MODEL)
                 .to_owned();
-            let (id, receiver) = context.state.create_job(prompt, images);
-            match receiver.recv_timeout(REQUEST_TIMEOUT) {
-                Ok(JobResult {
-                    text: Some(text),
-                    error: None,
-                }) => {
+            match context.state.complete(&model, prompt, images) {
+                Ok(text) => {
+                    let id = Uuid::new_v4().simple().to_string();
                     respond_json(
                         request,
                         200,
@@ -1635,22 +1849,11 @@ fn handle_request(mut request: Request, context: HttpContext) {
                         }),
                     );
                 }
-                Ok(result) => {
-                    let message = result
-                        .error
-                        .unwrap_or_else(|| "ChatGPT 응답이 비어 있습니다.".to_owned());
+                Err(error) => {
                     respond_json(
                         request,
                         502,
-                        json!({"error":{"message":message,"type":"browser_bridge_error"}}),
-                    );
-                }
-                Err(_) => {
-                    context.state.cancel_job(&id);
-                    respond_json(
-                        request,
-                        504,
-                        json!({"error":{"message":"ChatGPT 웹 응답 시간이 초과되었습니다. 열린 창과 로그인 상태를 확인하세요.","type":"browser_bridge_error"}}),
+                        json!({"error":{"message":error.to_string(),"type":"codex_app_server_error"}}),
                     );
                 }
             }
@@ -1725,19 +1928,16 @@ fn handle_request(mut request: Request, context: HttpContext) {
 struct RunningServer {
     stop: Arc<AtomicBool>,
     thread: thread::JoinHandle<()>,
-    state: BridgeState,
 }
 
-fn start_http_server(settings: Settings, bridge_token: String) -> AppResult<RunningServer> {
+fn start_http_server(settings: Settings) -> AppResult<RunningServer> {
     let server = Server::http(format!("{HOST}:{}", settings.port))?;
     let stop = Arc::new(AtomicBool::new(false));
     let context = HttpContext {
-        state: BridgeState::default(),
+        state: CodexState::default(),
         settings,
-        bridge_token,
         stop: stop.clone(),
     };
-    let state = context.state.clone();
     let server_stop = stop.clone();
     let server_thread = thread::spawn(move || {
         while !server_stop.load(Ordering::SeqCst) {
@@ -1754,7 +1954,6 @@ fn start_http_server(settings: Settings, bridge_token: String) -> AppResult<Runn
     Ok(RunningServer {
         stop,
         thread: server_thread,
-        state,
     })
 }
 
@@ -1875,8 +2074,6 @@ fn run_mcp(settings: &Settings) -> AppResult<()> {
     Ok(())
 }
 
-struct TauriBridge(BridgeState);
-
 struct TauriSettings(Arc<Mutex<Settings>>);
 
 fn start_gpt_sovits_lifetime_monitor(
@@ -1896,21 +2093,6 @@ fn start_gpt_sovits_lifetime_monitor(
 }
 
 #[tauri::command]
-fn bridge_next(state: tauri::State<'_, TauriBridge>) -> Option<ClaimedJob> {
-    state.0.claim_job()
-}
-
-#[tauri::command]
-fn bridge_result(
-    state: tauri::State<'_, TauriBridge>,
-    id: String,
-    text: Option<String>,
-    error: Option<String>,
-) -> bool {
-    state.0.finish_job(&id, text.as_deref(), error.as_deref())
-}
-
-#[tauri::command]
 fn prewarm_gpt_sovits(state: tauri::State<'_, TauriSettings>) -> Result<bool, String> {
     let settings = state
         .0
@@ -1918,6 +2100,29 @@ fn prewarm_gpt_sovits(state: tauri::State<'_, TauriSettings>) -> Result<bool, St
         .map_err(|_| "설정 잠금 오류".to_owned())?
         .clone();
     Ok(start_gpt_sovits_prewarm(settings))
+}
+
+#[tauri::command]
+fn open_codex_login_url(url: String) -> Result<(), String> {
+    if url != "https://auth.openai.com/codex/device" {
+        return Err("허용되지 않은 로그인 주소입니다.".to_owned());
+    }
+    Command::new("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("기본 브라우저를 열지 못했습니다: {error}"))
+}
+
+#[tauri::command]
+fn open_latest_release() -> Result<(), String> {
+    Command::new("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(LATEST_RELEASE_URL)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("업데이트 페이지를 열지 못했습니다: {error}"))
 }
 
 fn show_window(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
@@ -1929,37 +2134,28 @@ fn show_window(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
 }
 
 fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
-    let init_script = include_str!("init.js");
-    let tauri_state = TauriBridge(server.state.clone());
     let shared_settings = Arc::new(Mutex::new(settings));
     let voice_monitor_stop = Arc::new(AtomicBool::new(false));
     let voice_monitor =
         start_gpt_sovits_lifetime_monitor(shared_settings.clone(), voice_monitor_stop.clone());
     let result = tauri::Builder::default()
-        .manage(tauri_state)
         .manage(TauriSettings(shared_settings))
         .invoke_handler(tauri::generate_handler![
-            bridge_next,
-            bridge_result,
-            prewarm_gpt_sovits
+            prewarm_gpt_sovits,
+            open_codex_login_url,
+            open_latest_release
         ])
         .setup(move |app| {
-            WebviewWindowBuilder::new(
-                app,
-                "chatgpt",
-                WebviewUrl::External("https://chatgpt.com/".parse()?),
-            )
-            .title("LUMI to GPT — ChatGPT")
-            .inner_size(1160.0, 820.0)
-            .min_inner_size(720.0, 520.0)
-            .incognito(false)
-            .initialization_script(init_script)
-            .build()?;
+            WebviewWindowBuilder::new(app, "account", WebviewUrl::App("index.html".into()))
+                .title("LUMI to GPT")
+                .inner_size(600.0, 740.0)
+                .min_inner_size(500.0, 620.0)
+                .build()?;
 
-            let browser =
-                MenuItem::with_id(app, "chatgpt", "LUMI 프로젝트 열기", true, None::<&str>)?;
+            let account =
+                MenuItem::with_id(app, "account", "계정 및 업데이트", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&browser, &quit])?;
+            let menu = Menu::with_items(app, &[&account, &quit])?;
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.ico"))?;
             TrayIconBuilder::with_id("lumi-to-gpt")
                 .icon(icon)
@@ -1967,8 +2163,8 @@ fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "chatgpt" => {
-                        let _ = show_window(app, "chatgpt");
+                    "account" => {
+                        let _ = show_window(app, "account");
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -1981,7 +2177,7 @@ fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
                             ..
                         }
                     ) {
-                        let _ = show_window(tray.app_handle(), "chatgpt");
+                        let _ = show_window(tray.app_handle(), "account");
                     }
                 })
                 .build(app)?;
@@ -1989,7 +2185,7 @@ fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "chatgpt" {
+                if window.label() == "account" {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -2065,9 +2261,7 @@ fn real_main() -> AppResult<()> {
     {
         return Ok(());
     }
-    let bridge_token =
-        env::var("LUMI_TEST_BROWSER_TOKEN").unwrap_or_else(|_| Uuid::new_v4().simple().to_string());
-    let server = start_http_server(settings.clone(), bridge_token.clone())?;
+    let server = start_http_server(settings.clone())?;
     if arguments.iter().any(|value| value == "--headless") {
         let _ = server.thread.join();
         return Ok(());
@@ -2095,7 +2289,7 @@ mod tests {
                 {"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}
             ]}
         ]);
-        let (prompt, images) = build_browser_prompt(&messages).unwrap();
+        let (prompt, images) = build_codex_prompt(&messages).unwrap();
         assert!(prompt.contains("[시스템]\n반말로 말해."));
         assert!(prompt.contains("[사용자]\n화면 봐 줘"));
         assert_eq!(images, vec!["data:image/png;base64,AA=="]);
@@ -2145,7 +2339,9 @@ mod tests {
         assert!(updated.contains("llm.base.gpt_web=http://127.0.0.1:34567/v1"));
         assert!(updated.contains("llm.key.openai=old-secret"));
         assert!(updated.contains("llm.key.gpt_web=lumi-to-gpt"));
-        assert!(updated.contains("llm.model.gpt_web=chatgpt-web"));
+        assert!(updated.contains("llm.model.gpt_web=gpt-5.6-luna"));
+        assert!(updated.contains("chatter.enabled=false"));
+        assert!(updated.contains("screenwatch.enabled=false"));
         assert_eq!(
             fs::read_to_string(ai_settings.with_extension("properties.lumi-to-gpt.bak")).unwrap(),
             original

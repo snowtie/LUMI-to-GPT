@@ -4,8 +4,291 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>LUMI to GPT</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", sans-serif;
+        background: #edf6fa;
+        color: #17243a;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 28px; }
+      main { width: min(100%, 540px); margin: 0 auto; }
+      .brand { display: flex; align-items: center; gap: 15px; margin-bottom: 22px; }
+      .brand img { width: 76px; height: 76px; flex: 0 0 auto; border: 1px solid #d5e4eb; border-radius: 19px; object-fit: cover; box-shadow: 0 8px 22px rgba(40, 89, 112, .1); }
+      h1 { margin: 0; font-size: 29px; letter-spacing: -.7px; }
+      .lead { margin: 7px 0 0; color: #587084; line-height: 1.55; }
+      .stack { display: grid; gap: 14px; }
+      .card {
+        background: #fff;
+        border: 1px solid #c9dde7;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 10px 28px rgba(40, 89, 112, .07);
+      }
+      .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+      h2 { margin: 0; font-size: 17px; }
+      .status { display: inline-flex; align-items: center; gap: 8px; color: #52647a; font-size: 13px; font-weight: 700; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: #a9b4c0; }
+      .connected .dot, .current .dot { background: #18a673; }
+      .available .dot { background: #e69827; }
+      .error .dot { background: #d54848; }
+      dl { display: grid; grid-template-columns: 92px 1fr; gap: 8px 12px; margin: 0 0 18px; font-size: 14px; }
+      dt { color: #708195; }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 11px 14px;
+        background: #137da6;
+        color: white;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button.secondary { margin-top: 8px; background: #e6f1f6; color: #24536a; }
+      button:disabled { opacity: .55; cursor: wait; }
+      #device { display: none; margin-top: 16px; padding: 14px; border-radius: 12px; background: #f1f8fb; text-align: center; }
+      #code { margin: 7px 0 10px; font-size: 25px; font-weight: 800; letter-spacing: 2px; }
+      .message { min-height: 20px; margin: 12px 0 0; color: #52647a; font-size: 13px; line-height: 1.45; }
+      #release-notes { display: none; margin: 12px 0 0; padding: 12px; border-radius: 10px; background: #fff8ea; color: #654b1f; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+      .note { margin: 16px 2px 0; color: #607287; font-size: 12px; line-height: 1.55; }
+    </style>
   </head>
   <body>
-    <p>LUMI to GPT는 전용 ChatGPT 프로젝트 창에서 실행됩니다.</p>
+    <main>
+      <header class="brand">
+        <img src="lumi-chat-addon.png" alt="LUMI Chat Addon 로고">
+        <div>
+          <h1>LUMI to GPT</h1>
+          <p class="lead">공식 Codex OAuth 계정과 업데이트 상태를 확인합니다.</p>
+        </div>
+      </header>
+
+      <div class="stack">
+        <section class="card">
+          <div class="card-head">
+            <h2>ChatGPT 계정</h2>
+            <div id="account-status" class="status"><span class="dot"></span><span>확인 중</span></div>
+          </div>
+          <dl>
+            <dt>계정</dt><dd id="account">확인 중</dd>
+            <dt>기본 모델</dt><dd>GPT-5.6 Luna</dd>
+            <dt>추론 강도</dt><dd>낮음</dd>
+          </dl>
+          <button id="login" type="button">ChatGPT 계정 연결</button>
+          <button id="logout" class="secondary" type="button" hidden>연결 해제</button>
+          <div id="device">
+            <div>브라우저에서 아래 코드를 입력하세요.</div>
+            <div id="code"></div>
+            <button id="copy" class="secondary" type="button">코드 복사</button>
+          </div>
+          <p id="account-message" class="message"></p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>업데이트</h2>
+            <div id="update-status" class="status"><span class="dot"></span><span>자동 확인 중</span></div>
+          </div>
+          <dl>
+            <dt>현재 버전</dt><dd id="current-version">확인 중</dd>
+            <dt>최신 버전</dt><dd id="latest-version">확인 중</dd>
+          </dl>
+          <button id="open-release" type="button" hidden>새 버전 받기</button>
+          <button id="check-update" class="secondary" type="button">다시 확인</button>
+          <div id="release-notes"></div>
+          <p id="update-message" class="message">새 버전이 있으면 여기에서 알려드립니다.</p>
+        </section>
+      </div>
+
+      <p class="note">혼잣말과 화면 구경은 기본적으로 꺼져 있습니다. AI·목소리·페르소나는 Little LUMI의 루미 AI 설정에서 관리합니다.</p>
+    </main>
+
+    <script>
+      const api = "http://127.0.0.1:32123";
+      const releaseApi = "https://api.github.com/repos/snowtie/LUMI-to-GPT/releases/latest";
+      const accountStatus = document.querySelector("#account-status");
+      const account = document.querySelector("#account");
+      const login = document.querySelector("#login");
+      const logout = document.querySelector("#logout");
+      const device = document.querySelector("#device");
+      const code = document.querySelector("#code");
+      const copy = document.querySelector("#copy");
+      const accountMessage = document.querySelector("#account-message");
+      const updateStatus = document.querySelector("#update-status");
+      const currentVersion = document.querySelector("#current-version");
+      const latestVersion = document.querySelector("#latest-version");
+      const checkUpdate = document.querySelector("#check-update");
+      const openRelease = document.querySelector("#open-release");
+      const releaseNotes = document.querySelector("#release-notes");
+      const updateMessage = document.querySelector("#update-message");
+      let polling = false;
+
+      function setStatus(element, kind, text) {
+        element.className = `status ${kind}`;
+        element.lastElementChild.textContent = text;
+      }
+
+      function errorText(error) {
+        const text = String(error?.message || error || "알 수 없는 오류");
+        return /failed to fetch|networkerror/i.test(text) ? "서버에 연결할 수 없습니다." : text;
+      }
+
+      async function request(path, options = {}) {
+        const response = await fetch(`${api}${path}`, options);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "요청에 실패했습니다.");
+        return payload;
+      }
+
+      function versionParts(version) {
+        return String(version).replace(/^v/i, "").split(".").slice(0, 3).map(part => Number.parseInt(part, 10) || 0);
+      }
+
+      function compareVersions(latest, current) {
+        const left = versionParts(latest);
+        const right = versionParts(current);
+        for (let index = 0; index < 3; index += 1) {
+          if (left[index] !== right[index]) return left[index] > right[index] ? 1 : -1;
+        }
+        return 0;
+      }
+
+      async function refreshAccount() {
+        try {
+          const state = await request("/auth/status");
+          if (state.connected) {
+            const info = state.account || {};
+            setStatus(accountStatus, "connected", "연결됨");
+            account.textContent = [info.email, info.planType].filter(Boolean).join(" · ") || "연결됨";
+            login.hidden = true;
+            logout.hidden = false;
+            device.style.display = "none";
+            polling = false;
+          } else {
+            setStatus(accountStatus, "", "연결 필요");
+            account.textContent = "연결되지 않음";
+            login.hidden = false;
+            logout.hidden = true;
+          }
+        } catch (error) {
+          setStatus(accountStatus, "error", "확인 실패");
+          account.textContent = "Codex App Server 오류";
+          accountMessage.textContent = errorText(error);
+          polling = false;
+        }
+      }
+
+      async function pollUntilConnected() {
+        polling = true;
+        for (let count = 0; count < 180 && polling; count += 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          await refreshAccount();
+        }
+      }
+
+      async function refreshUpdate() {
+        checkUpdate.disabled = true;
+        setStatus(updateStatus, "", "자동 확인 중");
+        updateMessage.textContent = "GitHub에서 최신 배포 버전을 확인하고 있습니다.";
+        openRelease.hidden = true;
+        openRelease.textContent = "새 버전 받기";
+        releaseNotes.style.display = "none";
+        try {
+          const [health, response] = await Promise.all([
+            request("/health"),
+            fetch(releaseApi, { cache: "no-store" })
+          ]);
+          if (!response.ok) throw new Error(`GitHub 응답 오류 ${response.status}`);
+          const release = await response.json();
+          const current = health.version;
+          const latest = release.tag_name || "알 수 없음";
+          currentVersion.textContent = `v${String(current).replace(/^v/i, "")}`;
+          latestVersion.textContent = latest;
+          const comparison = compareVersions(latest, current);
+          if (comparison > 0) {
+            setStatus(updateStatus, "available", "새 버전 있음");
+            updateMessage.textContent = `${latest} 업데이트를 받을 수 있습니다.`;
+            openRelease.hidden = false;
+            const notes = String(release.body || "").trim().slice(0, 600);
+            if (notes) {
+              releaseNotes.textContent = notes;
+              releaseNotes.style.display = "block";
+            }
+          } else if (comparison < 0) {
+            setStatus(updateStatus, "current", "배포 전 버전");
+            updateMessage.textContent = "현재 버전이 GitHub 최신 배포보다 새롭습니다.";
+          } else {
+            setStatus(updateStatus, "current", "최신 버전");
+            updateMessage.textContent = "현재 최신 버전을 사용하고 있습니다.";
+          }
+        } catch (error) {
+          setStatus(updateStatus, "error", "확인 실패");
+          latestVersion.textContent = "확인할 수 없음";
+          updateMessage.textContent = `${errorText(error)} 다시 확인하거나 GitHub 배포 페이지를 이용해 주세요.`;
+          openRelease.textContent = "GitHub 배포 페이지 열기";
+          openRelease.hidden = false;
+        } finally {
+          checkUpdate.disabled = false;
+        }
+      }
+
+      login.addEventListener("click", async () => {
+        login.disabled = true;
+        accountMessage.textContent = "로그인 코드를 만드는 중입니다.";
+        try {
+          const result = await request("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+          });
+          code.textContent = result.userCode || "";
+          device.style.display = "block";
+          accountMessage.textContent = "브라우저에서 로그인과 연결 승인을 완료해 주세요.";
+          const invoke = window.__TAURI__?.core?.invoke;
+          if (invoke && result.verificationUrl) {
+            await invoke("open_codex_login_url", { url: result.verificationUrl });
+          }
+          pollUntilConnected();
+        } catch (error) {
+          accountMessage.textContent = errorText(error);
+        } finally {
+          login.disabled = false;
+        }
+      });
+
+      logout.addEventListener("click", async () => {
+        logout.disabled = true;
+        try {
+          await request("/auth/logout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+          });
+          accountMessage.textContent = "계정 연결을 해제했습니다.";
+          await refreshAccount();
+        } catch (error) {
+          accountMessage.textContent = errorText(error);
+        } finally {
+          logout.disabled = false;
+        }
+      });
+
+      copy.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(code.textContent);
+        accountMessage.textContent = "로그인 코드를 복사했습니다.";
+      });
+
+      checkUpdate.addEventListener("click", refreshUpdate);
+      openRelease.addEventListener("click", async () => {
+        await window.__TAURI__?.core?.invoke("open_latest_release");
+      });
+
+      window.__TAURI__?.core?.invoke("prewarm_gpt_sovits").catch(() => {});
+      refreshAccount();
+      refreshUpdate();
+    </script>
   </body>
 </html>

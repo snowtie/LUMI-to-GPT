@@ -1,7 +1,7 @@
 [package]
 name = "lumi-to-gpt"
-version = "0.9.0"
-description = "Connect LUMI Chat to a signed-in ChatGPT Web account"
+version = "1.0.0"
+description = "Connect LUMI Chat to ChatGPT through the official Codex App Server OAuth flow"
 edition = "2021"
 
 [build-dependencies]

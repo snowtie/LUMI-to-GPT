@@ -245,7 +245,7 @@ extends JDialog {
         JPanel jPanel = AiSettingsDialog.tabPanel();
         GridBagConstraints gridBagConstraints = AiSettingsDialog.tabConstraints();
         int n = 0;
-        n = AiSettingsDialog.intro(jPanel, gridBagConstraints, n, SpeechDirector.localized("AiBrainHint", "\ub8e8\ubbf8\uac00 \ud560 \ub9d0\uc744 \ub9cc\ub4dc\ub294 \ubd80\ubd84\uc785\ub2c8\ub2e4. \ud504\ub85c\ubc14\uc774\ub354\ub97c \uace0\ub974\uba74 Base URL\uacfc \ubaa8\ub378\uc740 \uadf8 \ud68c\uc0ac\uc758 \uae30\ubcf8\uac12\uc73c\ub85c \ucc44\uc6cc\uc9d1\ub2c8\ub2e4. \uc9c1\uc811 \ub123\ub294 \uac83\uc740 API \ud0a4 \ud558\ub098\uc785\ub2c8\ub2e4. \ubb34\ub8cc\ub85c \uc2dc\uc791\ud558\ub824\uba74 Ollama Cloud\ub97c \uace0\ub974\uace0 \uc544\ub798 \ubc84\ud2bc\uc5d0\uc11c \ud0a4\ub97c \ubc1b\uc2b5\ub2c8\ub2e4."));
+        n = AiSettingsDialog.intro(jPanel, gridBagConstraints, n, SpeechDirector.localized("AiBrainHint", "\ub8e8\ubbf8\uac00 \ud560 \ub9d0\uc744 \ub9cc\ub4dc\ub294 \ubd80\ubd84\uc785\ub2c8\ub2e4. ChatGPT (OAuth)\ub294 LUMI to GPT\uc5d0\uc11c \uacc4\uc815\ub9cc \uc5f0\uacb0\ud558\uba74 \ub418\uba70 API \ud0a4\uac00 \ud544\uc694\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \uae30\ubcf8 \ubaa8\ub378\uc740 \uac00\ubcbc\uc6b4 GPT-5.6 Luna\uc785\ub2c8\ub2e4. \ub2e4\ub978 \ud504\ub85c\ubc14\uc774\ub354\ub97c \uc4f8 \ub54c\ub9cc \ud574\ub2f9 \ud68c\uc0ac\uc758 API \ud0a4\ub97c \ub123\uc73c\uc138\uc694."));
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, SpeechDirector.localized("AiProvider", "\ud504\ub85c\ubc14\uc774\ub354"), this.llmProvider);
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, SpeechDirector.localized("AiBaseUrl", "Base URL"), this.llmBase);
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, SpeechDirector.localized("AiModel", "\ubaa8\ub378"), this.llmModel);
@@ -602,6 +602,7 @@ extends JDialog {
         this.llmBase.setText(aiSettings.llmBaseFor(this.shownProvider));
         this.llmModel.setText(aiSettings.llmModelFor(this.shownProvider));
         this.llmKey.setText(aiSettings.llmKeyFor(this.shownProvider));
+        this.syncLlmCredentialState();
         this.ttsEnabled.setSelected(aiSettings.ttsEnabled());
         this.ttsProvider.setSelectedIndex("gpt_sovits".equals(aiSettings.ttsProvider()) ? 2 : ("eleven".equals(aiSettings.ttsProvider()) ? 1 : 0));
         this.fishKey.setText(aiSettings.fishKey());
@@ -661,6 +662,13 @@ extends JDialog {
             this.llmModel.setText(aiSettings.llmModelFor(string));
             this.llmKey.setText(aiSettings.llmKeyFor(string));
         }
+        this.syncLlmCredentialState();
+    }
+
+    private void syncLlmCredentialState() {
+        boolean bl = "gpt_web".equals(this.shownProvider);
+        this.llmKey.setEnabled(!bl);
+        this.llmKey.setToolTipText(bl ? "ChatGPT (OAuth)\ub294 API \ud0a4 \ub300\uc2e0 LUMI to GPT\uc5d0\uc11c \uc5f0\uacb0\ud55c ChatGPT \uacc4\uc815\uc744 \uc0ac\uc6a9\ud569\ub2c8\ub2e4." : SpeechDirector.localized("AiApiKeyHint", "\uace0\ub978 \ud68c\uc0ac \ud648\ud398\uc774\uc9c0\uc5d0\uc11c \ubc1c\uae09\ubc1b\ub294 \ube44\ubc00 \ubb38\uc790\uc5f4\uc785\ub2c8\ub2e4."));
     }
 
     private void onCharacterSwitch() {

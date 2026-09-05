@@ -1,15 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "chatgpt-bridge",
-  "description": "지정한 ChatGPT 프로젝트의 응답을 Little LUMI로 전달합니다.",
-  "windows": ["chatgpt"],
-  "local": false,
-  "remote": {
-    "urls": ["https://chatgpt.com/*"]
-  },
+  "identifier": "chatgpt-account",
+  "description": "공식 Codex OAuth 계정 연결 화면입니다.",
+  "windows": ["account"],
+  "local": true,
   "permissions": [
-    "allow-bridge-next",
-    "allow-bridge-result",
-    "allow-prewarm-gpt-sovits"
+    "allow-prewarm-gpt-sovits",
+    "allow-open-codex-login-url",
+    "allow-open-latest-release"
   ]
 }

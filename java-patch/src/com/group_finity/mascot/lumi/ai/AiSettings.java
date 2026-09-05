@@ -308,7 +308,7 @@ public final class AiSettings {
     }
 
     static {
-        LLM_PROVIDERS.put("gpt_web", new String[]{"GPT Web", "http://127.0.0.1:32123/v1", "chatgpt-web", "openai"});
+        LLM_PROVIDERS.put("gpt_web", new String[]{"ChatGPT (OAuth)", "http://127.0.0.1:32123/v1", "gpt-5.6-luna", "openai"});
         LLM_PROVIDERS.put("ollama", new String[]{"Ollama Cloud", "https://ollama.com/v1", "deepseek-v4-flash:0731-cloud", "openai"});
         LLM_PROVIDERS.put("anthropic", new String[]{"Anthropic", "https://api.anthropic.com/v1", "claude-sonnet-5", "anthropic"});
         LLM_PROVIDERS.put("openrouter", new String[]{"OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto", "openai"});

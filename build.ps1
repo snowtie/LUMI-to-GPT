@@ -6,13 +6,16 @@ if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriRoot = Join-Path $ProjectRoot "src-tauri"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
-$Version = "0.9.0"
+$Version = "1.0.0"
 $VoiceWeightsSha256 = "4a0ff7071c3d0d4c56a48016d8bc66ca5c8c626d599c0e71300f0de3afa14e79"
 $ResolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\') + '\'
 $ResolvedReleaseRoot = [IO.Path]::GetFullPath($ReleaseRoot)
 if (-not $ResolvedReleaseRoot.StartsWith($ResolvedProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "release 폴더가 프로젝트 밖입니다: $ResolvedReleaseRoot"
 }
+
+$JavaPatchBuild = Join-Path $ProjectRoot "java-patch\build.ps1"
+& $JavaPatchBuild
 
 Push-Location $TauriRoot
 try {
@@ -67,32 +70,24 @@ Set-Content -LiteralPath (Join-Path $ReleaseRoot "workshop-dependency.txt") -Enc
 
 Add-Type -AssemblyName System.Drawing
 $PreviewPath = Join-Path $ReleaseRoot "workshop-preview.png"
+$LogoSource = Join-Path $ProjectRoot "ui\lumi-chat-addon.png"
+if (-not (Test-Path -LiteralPath $LogoSource -PathType Leaf)) {
+    throw "로고 원본이 없습니다: $LogoSource"
+}
+$SourceImage = [Drawing.Image]::FromFile($LogoSource)
 $Bitmap = [Drawing.Bitmap]::new(512, 512)
 $Graphics = [Drawing.Graphics]::FromImage($Bitmap)
-$Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-$Graphics.Clear([Drawing.Color]::FromArgb(17, 24, 39))
-$AccentBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(16, 163, 127))
-$WhiteBrush = [Drawing.SolidBrush]::new([Drawing.Color]::White)
-$MutedBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(203, 213, 225))
-$TitleFont = [Drawing.Font]::new("Segoe UI", 46, [Drawing.FontStyle]::Bold)
-$SubFont = [Drawing.Font]::new("Segoe UI", 19, [Drawing.FontStyle]::Regular)
+$Graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+$Graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+$Graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 try {
-    $Graphics.FillEllipse($AccentBrush, 46, 54, 92, 92)
-    $Graphics.DrawString("+", $TitleFont, $WhiteBrush, 66, 60)
-    $Graphics.DrawString("LUMI Chat", $TitleFont, $WhiteBrush, 46, 185)
-    $Graphics.DrawString("to GPT", $TitleFont, $AccentBrush, 46, 245)
-    $Graphics.DrawString("ChatGPT Web bridge", $SubFont, $MutedBrush, 50, 356)
-    $Graphics.DrawString("Requires LUMI Chat", $SubFont, $MutedBrush, 50, 396)
+    $Graphics.DrawImage($SourceImage, 0, 0, 512, 512)
     $Bitmap.Save($PreviewPath, [Drawing.Imaging.ImageFormat]::Png)
 }
 finally {
     $Graphics.Dispose()
     $Bitmap.Dispose()
-    $AccentBrush.Dispose()
-    $WhiteBrush.Dispose()
-    $MutedBrush.Dispose()
-    $TitleFont.Dispose()
-    $SubFont.Dispose()
+    $SourceImage.Dispose()
 }
 
 $VersionedPackageName = "LUMI-to-GPT-v$Version-windows-x64.zip"

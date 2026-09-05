@@ -7,6 +7,7 @@ import os
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -21,7 +22,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-BRIDGE_TOKEN = "lumi-smoke-token"
+VERSION = "1.0.0"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -45,19 +46,16 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def get_json(url: str, *, bridge: bool = False) -> dict:
-    headers = {"X-Lumi-Token": BRIDGE_TOKEN} if bridge else {}
-    request = urllib.request.Request(url, headers=headers)
+def get_json(url: str) -> dict:
+    request = urllib.request.Request(url)
     with urllib.request.urlopen(request, timeout=1) as response:
         if response.status == 204:
             return {}
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_json(url: str, payload: dict, *, bridge: bool = False, timeout: float = 10) -> dict:
+def post_json(url: str, payload: dict, *, timeout: float = 10) -> dict:
     headers = {"Content-Type": "application/json; charset=utf-8"}
-    if bridge:
-        headers["X-Lumi-Token"] = BRIDGE_TOKEN
     request = urllib.request.Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -84,6 +82,11 @@ def create_fake_lumi(root: Path) -> None:
         "tts.enabled=true\nchatter.enabled=false\nllm.provider=ollama\n",
         encoding="utf-8",
     )
+
+
+def create_fake_codex_archive(path: Path) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("codex-app-server-x86_64-pc-windows-msvc.exe", b"test-runtime")
 
 
 def run_lumi_chat_request(lumi_root: Path, *, timeout_seconds: float = 10) -> str:
@@ -234,22 +237,28 @@ def test_packaged_mcp() -> str:
 
 
 def test_release_package() -> dict[str, object]:
-    project_ui = (PROJECT_DIR / "src-tauri" / "src" / "init.js").read_text(encoding="utf-8")
+    project_ui = (PROJECT_DIR / "ui" / "index.html").read_text(encoding="utf-8")
     for expected in (
-        "LUMI 프로젝트",
-        "현재 프로젝트 연결",
+        "ChatGPT 계정 연결",
+        "/auth/login",
+        "GPT-5.6 Luna",
         "prewarm_gpt_sovits",
+        "api.github.com/repos/snowtie/LUMI-to-GPT/releases/latest",
+        "새 버전 받기",
+        'src="lumi-chat-addon.png"',
     ):
         if expected not in project_ui:
-            raise AssertionError({"missing_project_ui": expected})
-    for removed in ("LUMI AI 설정", "lumi-voice-runtime", "preview_gpt_sovits", "speak_gpt_sovits"):
+            raise AssertionError({"missing_account_ui": expected})
+    for removed in ("현재 프로젝트 연결", "chatgpt.com/backend-api", "bridge_next"):
         if removed in project_ui:
-            raise AssertionError({"webview_voice_ui_still_present": removed})
+            raise AssertionError({"obsolete_web_bridge_ui": removed})
+    if (PROJECT_DIR / "src-tauri" / "src" / "init.js").exists():
+        raise AssertionError("ChatGPT DOM 주입 스크립트가 남아 있습니다.")
 
     tauri_commands = (
-        "bridge_next",
-        "bridge_result",
         "prewarm_gpt_sovits",
+        "open_codex_login_url",
+        "open_latest_release",
     )
     app_manifest = (PROJECT_DIR / "src-tauri" / "build.rs").read_text(encoding="utf-8")
     capability = json.loads(
@@ -263,14 +272,10 @@ def test_release_package() -> dict[str, object]:
             raise AssertionError(
                 {"command": command, "permission": permission, "generated": generated.is_file()}
             )
-    if permissions & {
-        "allow-bridge-voice-next",
-        "allow-get-voice-settings",
-        "allow-save-voice-settings",
-        "allow-preview-gpt-sovits",
-        "allow-speak-gpt-sovits",
-    }:
-        raise AssertionError({"obsolete_remote_voice_permissions": sorted(permissions)})
+    if not capability.get("local") or "remote" in capability:
+        raise AssertionError({"non_local_account_capability": capability})
+    if permissions & {"allow-bridge-next", "allow-bridge-result"}:
+        raise AssertionError({"obsolete_dom_bridge_permissions": sorted(permissions)})
 
     content = RELEASE_DIR / "workshop-content"
     tool_root = content / "LUMI-to-GPT"
@@ -284,7 +289,7 @@ def test_release_package() -> dict[str, object]:
         RELEASE_DIR / "NOTICE.txt",
         RELEASE_DIR / "VOICE_MODEL_NOTICE.txt",
         RELEASE_DIR / "LUMI-to-GPT.zip",
-        RELEASE_DIR / "LUMI-to-GPT-v0.9.0-windows-x64.zip",
+        RELEASE_DIR / f"LUMI-to-GPT-v{VERSION}-windows-x64.zip",
         RELEASE_DIR / "SHA256SUMS.txt",
         RELEASE_DIR / "workshop-description.txt",
         RELEASE_DIR / "workshop-dependency.txt",
@@ -322,7 +327,7 @@ def test_release_package() -> dict[str, object]:
         if not expected_patch_classes <= patch_files:
             raise AssertionError({"patch_entries": sorted(patch_files)})
         marker = patch.read("META-INF/lumi-to-gpt-patch.properties").decode("utf-8")
-        if "version=0.9.0" not in marker:
+        if f"version={VERSION}" not in marker:
             raise AssertionError(marker)
         for entry in expected_patch_classes:
             if not entry.endswith(".class"):
@@ -362,7 +367,7 @@ def test_release_package() -> dict[str, object]:
     if archive_files != expected_archive_files:
         raise AssertionError({"archive_files": sorted(archive_files)})
 
-    versioned_package = RELEASE_DIR / "LUMI-to-GPT-v0.9.0-windows-x64.zip"
+    versioned_package = RELEASE_DIR / f"LUMI-to-GPT-v{VERSION}-windows-x64.zip"
     if versioned_package.read_bytes() != (RELEASE_DIR / "LUMI-to-GPT.zip").read_bytes():
         raise AssertionError("버전 ZIP과 호환용 ZIP의 내용이 다릅니다.")
 
@@ -385,10 +390,27 @@ def test_release_package() -> dict[str, object]:
         width, height = struct.unpack(">II", stream.read(8))
     if (width, height) != (512, 512):
         raise AssertionError((width, height))
+    logo_path = PROJECT_DIR / "ui" / "lumi-chat-addon.png"
+    if not logo_path.is_file() or logo_path.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+        raise AssertionError("LUMI Chat Addon 로고 원본이 없습니다.")
+    if (PROJECT_DIR / "src-tauri" / "icons" / "icon.ico").stat().st_size < 100_000:
+        raise AssertionError("새 LUMI Chat Addon 앱 아이콘이 적용되지 않았습니다.")
 
-    with tempfile.TemporaryDirectory() as install_dir, tempfile.TemporaryDirectory() as lumi_dir:
+    if (RELEASE_DIR / "install.ps1").read_bytes()[:3] != b"\xef\xbb\xbf":
+        raise AssertionError("Windows PowerShell 5.1용 UTF-8 BOM이 install.ps1에 없습니다.")
+    installer_menu = (RELEASE_DIR / "INSTALL.cmd").read_text(encoding="utf-8")
+    if "[3] Add LUMI GPT-SoVITS TTS" not in installer_menu or "INSTALL_MODE=TtsOnly" not in installer_menu:
+        raise AssertionError("TTS만 추가하는 설치 선택지가 없습니다.")
+
+    with (
+        tempfile.TemporaryDirectory() as install_dir,
+        tempfile.TemporaryDirectory() as lumi_dir,
+        tempfile.TemporaryDirectory() as package_dir,
+    ):
         lumi_root = Path(lumi_dir)
         create_fake_lumi(lumi_root)
+        codex_archive = Path(package_dir) / "codex-app-server.zip"
+        create_fake_codex_archive(codex_archive)
         env = os.environ.copy()
         env["LUMI_APP_DIR"] = lumi_dir
         env["LOCALAPPDATA"] = install_dir
@@ -409,6 +431,8 @@ def test_release_package() -> dict[str, object]:
                 str(tool_root / "install.ps1"),
                 "-TargetRoot",
                 install_dir,
+                "-CodexAppServerArchive",
+                str(codex_archive),
                 "-SkipMcp",
                 "-SkipShortcut",
                 "-SkipLumiPatch",
@@ -422,16 +446,21 @@ def test_release_package() -> dict[str, object]:
         )
         if result.returncode != 0:
             raise AssertionError(result.stderr or result.stdout)
-        for relative in ("lumi-to-gpt.exe", "README.md"):
+        for relative in ("lumi-to-gpt.exe", "codex-app-server.exe", "README.md"):
             if not (Path(install_dir) / relative).is_file():
                 raise AssertionError(f"설치 누락: {relative}")
+        install_logs = list((Path(install_dir) / "LumiToGPT" / "logs").glob("install-*.log"))
+        if len(install_logs) != 1 or "설치 완료" not in install_logs[0].read_text(encoding="utf-8-sig"):
+            raise AssertionError({"install_logs": [str(path) for path in install_logs]})
         configured = (lumi_root / "conf" / "ai.properties").read_text(encoding="utf-8")
         for expected in (
             "tts.enabled=true",
             "llm.provider=gpt_web",
             "llm.base.gpt_web=http://127.0.0.1:32123/v1",
             "llm.key.gpt_web=lumi-to-gpt",
-            "llm.model.gpt_web=chatgpt-web",
+            "llm.model.gpt_web=gpt-5.6-luna",
+            "chatter.enabled=false",
+            "screenwatch.enabled=false",
         ):
             if expected not in configured:
                 raise AssertionError({"missing_lumi_chat_setting": expected})
@@ -446,6 +475,8 @@ def test_release_package() -> dict[str, object]:
         package_root = Path(package_dir)
         runtime_archive = package_root / "runtime.7z"
         weights_archive = package_root / "weights.7z"
+        codex_archive = package_root / "codex-app-server.zip"
+        create_fake_codex_archive(codex_archive)
         reference = package_root / "reference.wav"
         reference.write_bytes(b"RIFF-test-wave")
         with zipfile.ZipFile(runtime_archive, "w") as archive:
@@ -473,6 +504,8 @@ def test_release_package() -> dict[str, object]:
                 str(runtime_archive),
                 "-VoiceWeightsArchive",
                 str(weights_archive),
+                "-CodexAppServerArchive",
+                str(codex_archive),
                 "-ReferenceAudio",
                 str(reference),
                 "-ReferenceText",
@@ -503,11 +536,115 @@ def test_release_package() -> dict[str, object]:
         )
         if not persistent["voice"]["enabled"]:
             raise AssertionError("휴대용 TTS 설치가 설정 보관본에 반영되지 않았습니다.")
+
+    with (
+        tempfile.TemporaryDirectory() as install_dir,
+        tempfile.TemporaryDirectory() as lumi_dir,
+        tempfile.TemporaryDirectory() as package_dir,
+    ):
+        lumi_root = Path(lumi_dir)
+        create_fake_lumi(lumi_root)
+        package_root = Path(package_dir)
+        target_root = Path(install_dir) / "app"
+        target_root.mkdir()
+        (target_root / "lumi-to-gpt.exe").write_bytes(APP_EXE.read_bytes())
+        runtime_archive = package_root / "runtime.7z"
+        weights_archive = package_root / "weights.7z"
+        reference = package_root / "reference.wav"
+        reference.write_bytes(b"RIFF-test-wave")
+        with zipfile.ZipFile(runtime_archive, "w") as archive:
+            archive.writestr("GPT-SoVITS-v2/api_v2.py", "# test")
+            archive.writestr("GPT-SoVITS-v2/runtime/python.exe", b"test")
+        with zipfile.ZipFile(weights_archive, "w") as archive:
+            archive.writestr("GPT_weights_v2/LUMI-e10.ckpt", b"gpt")
+            archive.writestr("SoVITS_weights_v2/LUMI_e8_s880.pth", b"sovits")
+        env = os.environ.copy()
+        env["LUMI_APP_DIR"] = lumi_dir
+        env["LOCALAPPDATA"] = install_dir
+        result = subprocess.run(
+            [
+                str(powershell),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(tool_root / "install.ps1"),
+                "-TargetRoot",
+                str(target_root),
+                "-InstallMode",
+                "TtsOnly",
+                "-GptSovitsArchive",
+                str(runtime_archive),
+                "-VoiceWeightsArchive",
+                str(weights_archive),
+                "-ReferenceAudio",
+                str(reference),
+                "-ReferenceText",
+                "TTS 단독 설치 테스트",
+                "-SkipMcp",
+                "-SkipShortcut",
+                "-SkipLumiPatch",
+            ],
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            env=env,
+            timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            raise AssertionError(result.stderr or result.stdout)
+        if (target_root / "codex-app-server.exe").exists():
+            raise AssertionError("TTS 단독 설치가 Codex App Server를 새로 설치했습니다.")
+        configured = (lumi_root / "conf" / "ai.properties").read_text(encoding="utf-8")
+        if "tts.gpt_sovits.reference_text=TTS 단독 설치 테스트" not in configured:
+            raise AssertionError(configured)
+        tts_logs = list((Path(install_dir) / "LumiToGPT" / "logs").glob("install-*.log"))
+        if len(tts_logs) != 1 or "모드: TtsOnly" not in tts_logs[0].read_text(encoding="utf-8-sig"):
+            raise AssertionError({"tts_only_logs": [str(path) for path in tts_logs]})
+
+    with tempfile.TemporaryDirectory() as install_dir, tempfile.TemporaryDirectory() as lumi_dir:
+        create_fake_lumi(Path(lumi_dir))
+        env = os.environ.copy()
+        env["LUMI_APP_DIR"] = lumi_dir
+        env["LOCALAPPDATA"] = install_dir
+        result = subprocess.run(
+            [
+                str(powershell),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(tool_root / "install.ps1"),
+                "-TargetRoot",
+                str(Path(install_dir) / "missing-app"),
+                "-InstallMode",
+                "TtsOnly",
+                "-SkipMcp",
+                "-SkipShortcut",
+                "-SkipLumiPatch",
+            ],
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            env=env,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode == 0:
+            raise AssertionError("설치 오류 상세 로그 테스트가 성공으로 끝났습니다.")
+        failure_logs = list((Path(install_dir) / "LumiToGPT" / "logs").glob("install-*.log"))
+        failure_text = failure_logs[0].read_text(encoding="utf-8-sig") if failure_logs else ""
+        for expected in ("설치에 실패했습니다.", "실패 단계: 애드온 파일 확인", "오류 종류:", "상세 로그:"):
+            if expected not in failure_text:
+                raise AssertionError({"missing_failure_detail": expected, "log": failure_text})
     return {
         "files": len(required),
         "archive_files": len(archive_files),
         "preview": "512x512",
         "portable_tts": True,
+        "tts_only": True,
+        "detailed_install_log": True,
     }
 
 
@@ -588,12 +725,56 @@ def main() -> int:
             json.dumps({"port": bridge_port, "lumi_app_dir": lumi_dir}),
             encoding="utf-8",
         )
+        prompt_log = Path(local_dir) / "codex-prompt.txt"
+        fake_codex = Path(local_dir) / "fake_codex_app_server.py"
+        fake_codex.write_text(
+            """\
+import json
+import os
+import sys
+
+response_text = os.environ["LUMI_TEST_RESPONSE"]
+prompt_log = os.environ["LUMI_TEST_PROMPT_LOG"]
+
+def send(message):
+    print(json.dumps(message, ensure_ascii=False), flush=True)
+
+for line in sys.stdin:
+    message = json.loads(line)
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "initialized":
+        continue
+    if method == "initialize":
+        send({"id": request_id, "result": {"userAgent": "fake-codex"}})
+    elif method == "account/read":
+        send({"id": request_id, "result": {"account": {"type": "chatgpt", "email": "test@example.com", "planType": "free"}, "requiresOpenaiAuth": True}})
+    elif method == "account/login/start":
+        send({"id": request_id, "result": {"type": "chatgptDeviceCode", "loginId": "test-login", "verificationUrl": "https://auth.openai.com/codex/device", "userCode": "TEST-CODE"}})
+    elif method == "account/logout":
+        send({"id": request_id, "result": {}})
+    elif method == "thread/start":
+        send({"id": request_id, "result": {"thread": {"id": "lumi-thread"}}})
+    elif method == "turn/start":
+        params = message["params"]
+        text = next(item["text"] for item in params["input"] if item["type"] == "text")
+        with open(prompt_log, "w", encoding="utf-8") as output:
+            output.write(text)
+        send({"id": request_id, "result": {"turn": {"id": "lumi-turn", "status": "inProgress", "items": []}}})
+        item = {"id": "answer", "type": "agentMessage", "text": response_text}
+        send({"method": "turn/completed", "params": {"threadId": "lumi-thread", "turn": {"id": "lumi-turn", "status": "completed", "items": [item], "error": None}}})
+""",
+            encoding="utf-8",
+        )
         base_url = f"http://127.0.0.1:{bridge_port}"
         process_env = os.environ.copy()
         process_env["LOCALAPPDATA"] = local_dir
         process_env["LUMI_APP_DIR"] = lumi_dir
         process_env["LUMI_ALLOW_TEST_SHUTDOWN"] = "1"
-        process_env["LUMI_TEST_BROWSER_TOKEN"] = BRIDGE_TOKEN
+        process_env["LUMI_CODEX_APP_SERVER"] = sys.executable
+        process_env["LUMI_CODEX_APP_SERVER_ARGS"] = json.dumps([str(fake_codex)])
+        process_env["LUMI_TEST_RESPONSE"] = LONG_RESPONSE
+        process_env["LUMI_TEST_PROMPT_LOG"] = str(prompt_log)
         process = subprocess.Popen(
             [str(APP_EXE), "--headless"],
             stdout=subprocess.DEVNULL,
@@ -611,57 +792,25 @@ def main() -> int:
                     time.sleep(0.1)
             if not health or not health.get("ok") or not health.get("lumi_chat_found"):
                 raise RuntimeError({"bridge_health": health})
-            if health.get("version") != "0.9.0":
+            if health.get("version") != VERSION:
                 raise AssertionError({"version": health.get("version")})
-
-            worker_error: list[Exception] = []
-            captured_prompts: list[str] = []
-
-            def browser_worker() -> None:
-                try:
-                    for _ in range(100):
-                        try:
-                            job = get_json(f"{base_url}/bridge/next", bridge=True)
-                            if not job:
-                                time.sleep(0.05)
-                                continue
-                            captured_prompts.append(job["prompt"])
-                            post_json(
-                                f"{base_url}/bridge/result",
-                                {"id": job["id"], "text": LONG_RESPONSE, "error": None},
-                                bridge=True,
-                            )
-                            return
-                        except urllib.error.HTTPError as error:
-                            if error.code != 204:
-                                raise
-                        except (OSError, urllib.error.URLError):
-                            pass
-                        time.sleep(0.05)
-                    raise RuntimeError("브리지 작업을 받지 못했습니다.")
-                except Exception as error:  # noqa: BLE001
-                    worker_error.append(error)
-
-            worker = threading.Thread(target=browser_worker, daemon=True)
-            worker.start()
+            auth = get_json(f"{base_url}/auth/status")
+            if not auth.get("connected") or auth.get("model") != "gpt-5.6-luna":
+                raise AssertionError({"codex_auth": auth})
             try:
                 text = run_lumi_chat_request(lumi_root)
             except Exception as error:
                 raise AssertionError(
                     {
                         "java_client": str(error),
-                        "captured_prompts": captured_prompts,
-                        "worker_error": [str(item) for item in worker_error],
                         "health": get_json(f"{base_url}/health"),
                     }
                 ) from error
-            worker.join(timeout=10)
-            if worker.is_alive() or worker_error:
-                raise RuntimeError(worker_error or "브라우저 모의 작업이 종료되지 않았습니다.")
             if text != LONG_RESPONSE:
                 raise AssertionError(text)
-            if not captured_prompts or "[시스템]" not in captured_prompts[0] or "[사용자]" not in captured_prompts[0]:
-                raise AssertionError({"captured_prompts": captured_prompts})
+            captured_prompt = prompt_log.read_text(encoding="utf-8")
+            if "[시스템]" not in captured_prompt or "[사용자]" not in captured_prompt:
+                raise AssertionError({"captured_prompt": captured_prompt})
             tts_result = run_lumi_tts_request(lumi_root)
             if tts_result != "16000.0:3200":
                 raise AssertionError({"tts_result": tts_result})
@@ -721,6 +870,7 @@ def main() -> int:
                         "version": health["version"],
                         "lumi_chat": health["lumi_chat_found"],
                         "lumi_chat_client": True,
+                        "codex_oauth_backend": auth["backend"],
                         "completion_chars": len(text),
                         "completion_ending": text[-7:],
                         "original_lumi_response_path": True,
