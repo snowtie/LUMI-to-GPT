@@ -1,7 +1,14 @@
-# LUMI to GPT v1.0.8
+# LUMI to GPT v1.0.9
 
 ## 주요 변경 사항
 
+- NVIDIA GPU 세대를 감지해 RTX 50 계열은 공식 CUDA 12.8 통합판, 기존 GPU는 CUDA 11.8 통합판을 자동 선택
+- 앱 버전과 분리된 `tts-runtimes.json`으로 공식 GPT-SoVITS 런타임 URL·SHA-256·GPU 범위 관리
+- Little LUMI의 `루미 AI 설정 → 목소리`에 `자동`, `GPU (CUDA)`, `CPU (호환성)` 장치 선택 추가
+- CUDA 표시 여부뿐 아니라 실제 텐서 연산까지 확인하고 실패하면 CPU + FP32로 안전하게 전환
+- 미리듣기 뒤에 실제 사용 장치와 CUDA 전환 이유 표시
+- RTX 50용 최신 GPT-SoVITS와 기존 V2 통합판의 Python API 차이를 자동 호환
+- Steam 보조 라이브러리까지 Little LUMI를 검색하고 찾지 못하면 설치 경로를 직접 입력
 - CUDA를 사용할 수 없는 PC에서 GPT-SoVITS를 자동으로 CPU + FP32 모드로 시작
 - CPU 대체 설정은 별도 임시 YAML로 만들어 GPT-SoVITS 원본 설정을 보존
 - TTS HTTP 실패 때 GPT-SoVITS의 실제 오류 응답과 파일 상태를 `tts-last-error.log`에 자동 기록
@@ -42,4 +49,4 @@
 - 기존 사용자는 Little LUMI를 종료한 뒤 `INSTALL.cmd`를 다시 실행하세요.
 - 대화는 로그인한 계정의 Codex 사용량과 한도를 따릅니다.
 - 실행 파일은 코드 서명되지 않아 Windows SmartScreen 경고가 표시될 수 있습니다.
-- TTS 자동 설치 시 약 5.7GB의 GPT-SoVITS 통합판과 약 420MB의 LUMI 음성 가중치를 추가로 내려받습니다.
+- TTS 자동 설치 시 GPU에 따라 약 5.7GB 또는 8.84GB의 공식 GPT-SoVITS 통합판 하나와 약 420MB의 LUMI 음성 가중치를 추가로 내려받습니다.

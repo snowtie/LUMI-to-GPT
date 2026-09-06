@@ -7,6 +7,8 @@
     [string]$CodexAppServerArchive,
     [string]$ReferenceAudio,
     [string]$ReferenceText,
+    [string]$LumiAppPath,
+    [string]$TtsRuntimeManifest,
     [string]$TtsDataRoot = (Join-Path $env:LOCALAPPDATA "LumiToGPT"),
     [switch]$SkipMcp,
     [switch]$SkipShortcut,
@@ -20,8 +22,8 @@ if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
 
 $SourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgeSource = Join-Path $SourceRoot "LUMI to GPT.exe"
-$GptSovitsUrl = "https://huggingface.co/lj1995/GPT-SoVITS-windows-package/resolve/main/GPT-SoVITS-v2-240821.7z?download=true"
-$GptSovitsSha256 = "9D9BA79DE6ACA0CF28A3635CCB1DBBB08B6AEF362C4352E32FAD99BB49E3000A"
+$BundledTtsRuntimeManifest = Join-Path $SourceRoot "tts-runtimes.json"
+$RemoteTtsRuntimeManifestUrl = "https://raw.githubusercontent.com/snowtie/LUMI-to-GPT/main/tts-runtimes.json"
 $CodexAppServerVersion = "0.153.4"
 $CodexAppServerUrl = "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-app-server-x86_64-pc-windows-msvc.exe.zip"
 $CodexAppServerSha256 = "B944B854A150BD3C269D9F17CF58756BC29FA248E93D9E6CD1DAC3CEE1D8A774"
@@ -93,22 +95,77 @@ function Invoke-BridgeSetup([string]$Executable, [string]$Argument, [string]$Lab
     throw "$Label 실패 (종료 코드 $($process.ExitCode)): $details"
 }
 
-function Find-LittleLumiApp {
-    if ($env:LUMI_APP_DIR) {
-        $configured = [IO.Path]::GetFullPath($env:LUMI_APP_DIR)
-        if ([IO.File]::Exists([IO.Path]::Combine($configured, "Shimeji-ee.jar"))) { return $configured }
-    }
-    foreach ($drive in [char[]](67..90)) {
-        foreach ($suffix in @(
-            "Steam\steamapps\common\Little LUMI\app",
-            "Program Files (x86)\Steam\steamapps\common\Little LUMI\app",
-            "Program Files\Steam\steamapps\common\Little LUMI\app"
-        )) {
-            $candidate = "${drive}:\$suffix"
-            if ([IO.File]::Exists([IO.Path]::Combine($candidate, "Shimeji-ee.jar"))) { return $candidate }
+function Resolve-LittleLumiApp([string]$Candidate) {
+    if ([String]::IsNullOrWhiteSpace($Candidate)) { return $null }
+    try {
+        $fullPath = [IO.Path]::GetFullPath($Candidate.Trim().Trim('"'))
+        foreach ($path in @($fullPath, [IO.Path]::Combine($fullPath, "app"))) {
+            if ([IO.File]::Exists([IO.Path]::Combine($path, "Shimeji-ee.jar"))) { return $path }
         }
     }
-    throw "Little LUMI 설치 폴더를 찾지 못했습니다."
+    catch { return $null }
+    return $null
+}
+
+function Get-SteamLibraryRoots([string[]]$InitialRoots) {
+    $steamRoots = [Collections.Generic.List[string]]::new()
+    if ($InitialRoots) {
+        foreach ($path in $InitialRoots) { $steamRoots.Add($path) | Out-Null }
+    }
+    else {
+        foreach ($registryPath in @(
+            "HKCU:\Software\Valve\Steam",
+            "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam",
+            "HKLM:\SOFTWARE\Valve\Steam"
+        )) {
+            $steam = Get-ItemProperty -LiteralPath $registryPath -ErrorAction SilentlyContinue
+            if ($steam) {
+                foreach ($propertyName in @("SteamPath", "InstallPath")) {
+                    $path = $steam.$propertyName
+                    if (-not [String]::IsNullOrWhiteSpace($path)) { $steamRoots.Add($path) | Out-Null }
+                }
+            }
+        }
+        foreach ($drive in [char[]](67..90)) {
+            foreach ($steamFolder in @(
+                "Steam",
+                "SteamLibrary",
+                "Program Files (x86)\Steam",
+                "Program Files\Steam"
+            )) {
+                $steamRoots.Add("${drive}:\$steamFolder") | Out-Null
+            }
+        }
+    }
+
+    foreach ($steamRoot in @($steamRoots)) {
+        $libraryFile = [IO.Path]::Combine($steamRoot, "steamapps", "libraryfolders.vdf")
+        if (-not [IO.File]::Exists($libraryFile)) { continue }
+        $content = [IO.File]::ReadAllText($libraryFile)
+        foreach ($match in [regex]::Matches($content, '"path"\s+"(?<path>[^"]+)"', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            $steamRoots.Add($match.Groups["path"].Value.Replace("\\", "\")) | Out-Null
+        }
+    }
+    @($steamRoots | Sort-Object -Unique)
+}
+
+function Find-LittleLumiApp([string[]]$KnownSteamRoots) {
+    foreach ($configured in @($LumiAppPath, $env:LUMI_APP_DIR)) {
+        $found = Resolve-LittleLumiApp $configured
+        if ($found) { return $found }
+    }
+    foreach ($steamRoot in Get-SteamLibraryRoots $KnownSteamRoots) {
+        $candidate = [IO.Path]::Combine($steamRoot, "steamapps", "common", "Little LUMI", "app")
+        $found = Resolve-LittleLumiApp $candidate
+        if ($found) { return $found }
+    }
+
+    Write-Host "Little LUMI 설치 폴더를 자동으로 찾지 못했습니다."
+    Write-Host "Steam에서 Little LUMI 우클릭 > 관리 > 로컬 파일 탐색을 누른 뒤 app 폴더 경로를 붙여넣어 주세요."
+    $manualPath = Read-Host "Little LUMI 또는 app 폴더"
+    $found = Resolve-LittleLumiApp $manualPath
+    if ($found) { return $found }
+    throw "선택한 폴더에서 Little LUMI의 Shimeji-ee.jar를 찾지 못했습니다: $manualPath"
 }
 
 function Assert-SafeArchive([string]$ArchivePath) {
@@ -162,7 +219,83 @@ function Save-Download([string]$Url, [string]$Destination, [string]$FailureMessa
     }
 }
 
-function Resolve-GptSovitsArchive([string]$RequestedPath, [string]$DataRoot) {
+function Read-TtsRuntimeManifest([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "TTS 런타임 목록을 찾지 못했습니다: $Path"
+    }
+    $manifest = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($manifest.schema_version -ne 1 -or -not $manifest.revision -or -not $manifest.runtimes) {
+        throw "TTS 런타임 목록 형식이 올바르지 않습니다: $Path"
+    }
+    foreach ($runtime in @($manifest.runtimes)) {
+        if (-not $runtime.id -or $runtime.id -notmatch '^[a-z0-9-]+$' -or
+            -not $runtime.archive_name -or [IO.Path]::GetFileName($runtime.archive_name) -ne $runtime.archive_name -or
+            -not $runtime.url -or -not $runtime.url.StartsWith("https://huggingface.co/lj1995/GPT-SoVITS-windows-package/resolve/main/") -or
+            -not $runtime.sha256 -or $runtime.sha256 -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw "TTS 런타임 항목이 올바르지 않습니다: $($runtime.id)"
+        }
+    }
+    return $manifest
+}
+
+function Resolve-TtsRuntimeManifest([string]$RequestedPath, [string]$DataRoot) {
+    if ($RequestedPath) {
+        return Read-TtsRuntimeManifest ([IO.Path]::GetFullPath($RequestedPath))
+    }
+
+    $bundled = Read-TtsRuntimeManifest $BundledTtsRuntimeManifest
+    $downloaded = Join-Path $DataRoot "downloads\tts-runtimes.json"
+    try {
+        Save-Download $RemoteTtsRuntimeManifestUrl $downloaded "최신 TTS 런타임 목록 다운로드에 실패했습니다."
+        $remote = Read-TtsRuntimeManifest $downloaded
+        Write-Host "TTS 런타임 목록: $($remote.revision)"
+        return $remote
+    }
+    catch {
+        Write-Host "최신 TTS 런타임 목록을 확인하지 못해 내장 목록 $($bundled.revision)을 사용합니다." -ForegroundColor Yellow
+        return $bundled
+    }
+}
+
+function Get-NvidiaComputeCapability {
+    $command = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if (-not $command) { return $null }
+    try {
+        $values = @(& $command.Source --query-gpu=compute_cap --format=csv,noheader,nounits 2>$null)
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $capabilities = [Collections.Generic.List[double]]::new()
+        foreach ($value in $values) {
+            $parsed = 0.0
+            if ([double]::TryParse(
+                ([string]$value).Trim(),
+                [Globalization.NumberStyles]::Float,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [ref]$parsed
+            )) {
+                $capabilities.Add($parsed) | Out-Null
+            }
+        }
+        if ($capabilities.Count -gt 0) { return ($capabilities | Measure-Object -Maximum).Maximum }
+    }
+    catch { return $null }
+    return $null
+}
+
+function Select-TtsRuntime($Manifest, [Nullable[double]]$ComputeCapability) {
+    $candidates = @($Manifest.runtimes | Where-Object {
+        $minimumMatches = $null -eq $_.min_compute_capability -or
+            ($null -ne $ComputeCapability -and [double]$ComputeCapability -ge [double]$_.min_compute_capability)
+        $maximumMatches = $null -eq $_.max_compute_capability -or
+            ($null -ne $ComputeCapability -and [double]$ComputeCapability -le [double]$_.max_compute_capability)
+        $minimumMatches -and $maximumMatches
+    } | Sort-Object -Property @{ Expression = { [int]$_.priority }; Descending = $true })
+    if ($candidates.Count -gt 0) { return $candidates[0] }
+    $fallback = @($Manifest.runtimes | Where-Object { $_.default }) | Select-Object -First 1
+    if ($fallback) { return $fallback }
+    throw "이 PC에 맞는 TTS 런타임이 목록에 없습니다."
+}
+
+function Resolve-GptSovitsArchive([string]$RequestedPath, [string]$DataRoot, $Runtime) {
     if ($RequestedPath) {
         $resolved = [IO.Path]::GetFullPath($RequestedPath)
         if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
@@ -172,13 +305,13 @@ function Resolve-GptSovitsArchive([string]$RequestedPath, [string]$DataRoot) {
     }
 
     $downloadRoot = Join-Path $DataRoot "downloads"
-    $archive = Join-Path $downloadRoot "GPT-SoVITS-v2-240821.7z"
+    $archive = Join-Path $downloadRoot ([string]$Runtime.archive_name)
     if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-        Write-Host "GPT-SoVITS 공식 통합판을 내려받습니다. 약 5.7GB입니다."
-        Save-Download $GptSovitsUrl $archive "GPT-SoVITS 다운로드에 실패했습니다."
+        Write-Host "$($Runtime.label) 공식 통합판을 내려받습니다. 약 $($Runtime.download_size_gb)GB입니다."
+        Save-Download ([string]$Runtime.url) $archive "GPT-SoVITS 다운로드에 실패했습니다."
     }
     $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
-    if ($actualHash -ne $GptSovitsSha256) {
+    if ($actualHash -ne ([string]$Runtime.sha256).ToUpperInvariant()) {
         throw "GPT-SoVITS 통합판의 SHA-256이 올바르지 않습니다: $archive"
     }
     return $archive
@@ -291,17 +424,43 @@ function Install-GptSovits([string]$LumiApp, [string]$DataRoot) {
     New-Item -ItemType Directory -Force -Path $resolvedDataRoot | Out-Null
 
     $runtimeRoot = Join-Path $resolvedDataRoot "gpt-sovits"
-    $runtime = Find-GptSovitsRuntime $runtimeRoot
-    if (-not $runtime) {
-        if ((Test-Path -LiteralPath $runtimeRoot) -and @(Get-ChildItem -LiteralPath $runtimeRoot -Force).Count -gt 0) {
-            throw "완전하지 않은 GPT-SoVITS 폴더가 있습니다: $runtimeRoot"
-        }
-        $runtimeArchive = Resolve-GptSovitsArchive $GptSovitsArchive $resolvedDataRoot
-        Write-Host "GPT-SoVITS 통합판의 압축을 해제합니다. 오래 걸릴 수 있으니 CMD 창을 닫지 마세요."
-        Expand-SafeArchive $runtimeArchive $runtimeRoot
+    $computeCapability = Get-NvidiaComputeCapability
+    $manifest = if ($GptSovitsArchive) { Read-TtsRuntimeManifest $BundledTtsRuntimeManifest } else {
+        Resolve-TtsRuntimeManifest $TtsRuntimeManifest $resolvedDataRoot
+    }
+    $selectedRuntime = Select-TtsRuntime $manifest $computeCapability
+    $runtimeId = if ($GptSovitsArchive) { "custom" } else { [string]$selectedRuntime.id }
+    $runtimeLabel = if ($computeCapability -ne $null) { "NVIDIA Compute Capability $computeCapability" } else { "CPU 호환 모드" }
+    Write-Host "선택한 TTS 런타임: $runtimeId ($runtimeLabel)"
+
+    $packRoot = Join-Path $runtimeRoot (Join-Path "runtimes" $runtimeId)
+    $runtime = Find-GptSovitsRuntime $packRoot
+    if (-not $runtime -and $runtimeId -eq "v2-cu118-legacy") {
         $runtime = Find-GptSovitsRuntime $runtimeRoot
+    }
+    if (-not $runtime) {
+        if ((Test-Path -LiteralPath $packRoot) -and @(Get-ChildItem -LiteralPath $packRoot -Force).Count -gt 0) {
+            throw "완전하지 않은 GPT-SoVITS 런타임 폴더가 있습니다: $packRoot"
+        }
+        $runtimeArchive = Resolve-GptSovitsArchive $GptSovitsArchive $resolvedDataRoot $selectedRuntime
+        Write-Host "GPT-SoVITS 통합판의 압축을 해제합니다. 오래 걸릴 수 있으니 CMD 창을 닫지 마세요."
+        Expand-SafeArchive $runtimeArchive $packRoot
+        $runtime = Find-GptSovitsRuntime $packRoot
         if (-not $runtime) { throw "압축 파일에서 GPT-SoVITS 실행 환경을 찾지 못했습니다." }
     }
+
+    $selection = [ordered]@{
+        schema_version = 1
+        manifest_revision = [string]$manifest.revision
+        runtime_id = $runtimeId
+        runtime_root = [IO.Path]::GetFullPath($runtime)
+        compute_capability = $computeCapability
+    } | ConvertTo-Json
+    [IO.File]::WriteAllText(
+        (Join-Path $resolvedDataRoot "gpt-sovits-runtime-selection.json"),
+        $selection,
+        [Text.UTF8Encoding]::new($false)
+    )
 
     $modelRoot = Join-Path $resolvedDataRoot "models\LUMI-v2"
     $gptWeight = Get-ChildItem -LiteralPath $modelRoot -Recurse -File -Filter "LUMI-e10.ckpt" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -316,7 +475,7 @@ function Install-GptSovits([string]$LumiApp, [string]$DataRoot) {
     $reference = Find-ReferenceVoice $LumiApp $ReferenceAudio $ReferenceText
 
     return @{
-        Runtime = $runtimeRoot
+        Runtime = [IO.Path]::GetFullPath($runtime)
         GptWeight = $gptWeight
         SovitsWeight = $sovitsWeight
         ReferenceAudio = $reference.Audio

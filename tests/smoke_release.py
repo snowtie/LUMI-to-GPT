@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_EXE = PROJECT_DIR / "release" / "LUMI to GPT.exe"
 RELEASE_DIR = PROJECT_DIR / "release"
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 LONG_RESPONSE = "긴 응답 시작. " + ("마지막까지 잘리지 않는 문장입니다. " * 24) + "긴 응답 끝."
 LUMI_CHAT_JAR = Path(
     os.environ.get(
@@ -164,7 +164,7 @@ import com.group_finity.mascot.lumi.ai.TtsClient;
 public final class LumiTtsClientSmoke {
     public static void main(String[] args) throws Exception {
         TtsClient.Audio audio = TtsClient.synthesize("GPT 답변 원문 그대로", "Lumi");
-        System.out.print(audio.format().getSampleRate() + ":" + audio.pcm().length);
+        System.out.print(audio.format().getSampleRate() + ":" + audio.pcm().length + ":" + TtsClient.gptSovitsDeviceStatus());
     }
 }
 """
@@ -172,7 +172,14 @@ public final class LumiTtsClientSmoke {
         source_path = Path(classes_dir) / "LumiTtsClientSmoke.java"
         source_path.write_text(source, encoding="utf-8")
         compile_result = subprocess.run(
-            [str(JAVAC_25), "-encoding", "UTF-8", "-cp", str(LUMI_CHAT_JAR), str(source_path)],
+            [
+                str(JAVAC_25),
+                "-encoding",
+                "UTF-8",
+                "-cp",
+                os.pathsep.join((str(PATCH_JAR), str(LUMI_CHAT_JAR))),
+                str(source_path),
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -237,6 +244,112 @@ def test_packaged_mcp() -> str:
         return notification
 
 
+def test_nonstandard_steam_library_discovery(installer: Path) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        steam_root = root / "Steam Client"
+        library_root = root / "Custom Games"
+        app_root = library_root / "steamapps" / "common" / "Little LUMI" / "app"
+        (steam_root / "steamapps").mkdir(parents=True)
+        app_root.mkdir(parents=True)
+        (app_root / "Shimeji-ee.jar").write_bytes(b"test")
+        escaped_library = str(library_root).replace("\\", "\\\\")
+        (steam_root / "steamapps" / "libraryfolders.vdf").write_text(
+            f'"libraryfolders"\n{{\n\t"0"\n\t{{\n\t\t"path"\t\t"{escaped_library}"\n\t}}\n}}\n',
+            encoding="utf-8",
+        )
+        probe = root / "probe.ps1"
+        probe.write_text(
+            """param([string]$Installer, [string]$SteamRoot)
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+foreach ($name in @('Resolve-LittleLumiApp', 'Get-SteamLibraryRoots', 'Find-LittleLumiApp')) {
+    $functionAst = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true)
+    Invoke-Expression $functionAst.Extent.Text
+}
+Remove-Item Env:LUMI_APP_DIR -ErrorAction SilentlyContinue
+$found = Find-LittleLumiApp -KnownSteamRoots @($SteamRoot)
+[Console]::Out.Write($found)
+""",
+            encoding="utf-8-sig",
+        )
+        powershell = (
+            Path(os.environ.get("SystemRoot", r"C:\Windows"))
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        result = subprocess.run(
+            [str(powershell), "-NoProfile", "-File", str(probe), str(installer), str(steam_root)],
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            raise AssertionError(result.stderr or result.stdout)
+        if Path(result.stdout.strip()) != app_root:
+            raise AssertionError({"steam_library_found": result.stdout, "expected": str(app_root)})
+
+
+def test_tts_runtime_manifest_selection(installer: Path, manifest_path: Path) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        probe = Path(temporary) / "probe.ps1"
+        probe.write_text(
+            """param([string]$Installer, [string]$ManifestPath)
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+$functionAst = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Select-TtsRuntime'
+}, $true)
+Invoke-Expression $functionAst.Extent.Text
+$manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$result = [ordered]@{
+    blackwell = (Select-TtsRuntime $manifest ([Nullable[double]]10.0)).id
+    legacy = (Select-TtsRuntime $manifest ([Nullable[double]]8.6)).id
+    cpu = (Select-TtsRuntime $manifest $null).id
+}
+[Console]::Out.Write(($result | ConvertTo-Json -Compress))
+""",
+            encoding="utf-8-sig",
+        )
+        powershell = (
+            Path(os.environ.get("SystemRoot", r"C:\Windows"))
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        result = subprocess.run(
+            [str(powershell), "-NoProfile", "-File", str(probe), str(installer), str(manifest_path)],
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            raise AssertionError(result.stderr or result.stdout)
+        selected = json.loads(result.stdout)
+        expected = {
+            "blackwell": "v2-cu128-blackwell",
+            "legacy": "v2-cu118-legacy",
+            "cpu": "v2-cu118-legacy",
+        }
+        if selected != expected:
+            raise AssertionError({"runtime_selection": selected, "expected": expected})
+
+
 def test_release_package() -> dict[str, object]:
     project_ui = (PROJECT_DIR / "ui" / "index.html").read_text(encoding="utf-8")
     for expected in (
@@ -294,6 +407,7 @@ def test_release_package() -> dict[str, object]:
         RELEASE_DIR / "LICENSE",
         RELEASE_DIR / "NOTICE.txt",
         RELEASE_DIR / "VOICE_MODEL_NOTICE.txt",
+        RELEASE_DIR / "tts-runtimes.json",
         RELEASE_DIR / "LUMI-to-GPT.zip",
         RELEASE_DIR / f"LUMI-to-GPT-v{VERSION}-windows-x64.zip",
         RELEASE_DIR / "SHA256SUMS.txt",
@@ -311,6 +425,7 @@ def test_release_package() -> dict[str, object]:
         tool_root / "LICENSE",
         tool_root / "NOTICE.txt",
         tool_root / "VOICE_MODEL_NOTICE.txt",
+        tool_root / "tts-runtimes.json",
         tool_root / "little-lumi-patch" / "lumi-to-gpt-little-lumi-patch.jar",
         tool_root / "little-lumi-patch" / "original-class-sha256.json",
     ]
@@ -367,11 +482,28 @@ def test_release_package() -> dict[str, object]:
         "LICENSE",
         "NOTICE.txt",
         "VOICE_MODEL_NOTICE.txt",
+        "tts-runtimes.json",
         "little-lumi-patch/lumi-to-gpt-little-lumi-patch.jar",
         "little-lumi-patch/original-class-sha256.json",
     }
     if archive_files != expected_archive_files:
         raise AssertionError({"archive_files": sorted(archive_files)})
+
+    runtime_manifest = json.loads((RELEASE_DIR / "tts-runtimes.json").read_text(encoding="utf-8"))
+    runtimes = {runtime["id"]: runtime for runtime in runtime_manifest["runtimes"]}
+    if runtime_manifest["schema_version"] != 1 or set(runtimes) != {
+        "v2-cu128-blackwell",
+        "v2-cu118-legacy",
+    }:
+        raise AssertionError(runtime_manifest)
+    if runtimes["v2-cu128-blackwell"]["sha256"].lower() != (
+        "97b4edcd451c42357db7e26e6c1c877ca5d85144fe97beaff6d7005d35bee008"
+    ):
+        raise AssertionError(runtimes["v2-cu128-blackwell"])
+    if runtimes["v2-cu118-legacy"]["sha256"].lower() != (
+        "9d9ba79de6aca0cf28a3635ccb1dbbb08b6aef362c4352e32fad99bb49e3000a"
+    ):
+        raise AssertionError(runtimes["v2-cu118-legacy"])
 
     versioned_package = RELEASE_DIR / f"LUMI-to-GPT-v{VERSION}-windows-x64.zip"
     if versioned_package.read_bytes() != (RELEASE_DIR / "LUMI-to-GPT.zip").read_bytes():
@@ -415,8 +547,15 @@ def test_release_package() -> dict[str, object]:
             raise AssertionError({"missing_shortcut_refresh": expected})
     if 'Join-Path $candidate "Shimeji-ee.jar"' in installer_script:
         raise AssertionError("존재하지 않는 드라이브를 Join-Path로 검사하고 있습니다.")
-    if '[IO.File]::Exists([IO.Path]::Combine($candidate, "Shimeji-ee.jar"))' not in installer_script:
+    if '[IO.File]::Exists([IO.Path]::Combine($path, "Shimeji-ee.jar"))' not in installer_script:
         raise AssertionError("없는 Steam 드라이브를 건너뛰는 검사가 없습니다.")
+    for expected in ("libraryfolders.vdf", "SteamLibrary", "Read-Host"):
+        if expected not in installer_script:
+            raise AssertionError({"missing_lumi_discovery": expected})
+    test_nonstandard_steam_library_discovery(RELEASE_DIR / "install.ps1")
+    test_tts_runtime_manifest_selection(
+        RELEASE_DIR / "install.ps1", RELEASE_DIR / "tts-runtimes.json"
+    )
 
     with (
         tempfile.TemporaryDirectory() as install_dir,
@@ -584,6 +723,13 @@ def test_release_package() -> dict[str, object]:
         )
         if not persistent["voice"]["enabled"]:
             raise AssertionError("휴대용 TTS 설치가 설정 보관본에 반영되지 않았습니다.")
+        selection = json.loads(
+            (Path(install_dir) / "LumiToGPT" / "gpt-sovits-runtime-selection.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if selection["runtime_id"] != "custom" or not Path(selection["runtime_root"]).is_dir():
+            raise AssertionError(selection)
 
     with (
         tempfile.TemporaryDirectory() as install_dir,
@@ -1005,7 +1151,7 @@ for line in sys.stdin:
             if Path(captured_image["path"]).exists():
                 raise AssertionError({"temporary_image_not_removed": captured_image["path"]})
             tts_result = run_lumi_tts_request(lumi_root)
-            if tts_result != "16000.0:3200":
+            if tts_result != "16000.0:3200:장치 확인 불가":
                 raise AssertionError({"tts_result": tts_result})
             if len(captured_voice_payloads) != 1:
                 raise AssertionError({"tts_request_count": len(captured_voice_payloads)})
@@ -1025,6 +1171,8 @@ for line in sys.stdin:
                 raise AssertionError({"persisted_voice": saved_settings.get("voice")})
             if saved_settings["voice"]["power_mode"] != "ultra_saver":
                 raise AssertionError({"voice_power_mode": saved_settings.get("voice")})
+            if saved_settings["voice"]["device_mode"] != "auto":
+                raise AssertionError({"tts_device_mode": saved_settings.get("voice")})
             if saved_settings["voice"]["gpt_weights_path"] != r"C:\models\lumi.ckpt":
                 raise AssertionError({"voice_weights": saved_settings.get("voice")})
 

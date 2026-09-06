@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.8";
+const VERSION: &str = "1.0.9";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -41,7 +41,9 @@ const GPT_SOVITS_BALANCED_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const GPT_SOVITS_ULTRA_SAVER_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const GPT_SOVITS_START_TIMEOUT: Duration = Duration::from_secs(120);
 const VOICE_MANAGED_KEY: &str = "lumi_to_gpt.voice.managed";
-const GPT_SOVITS_COMPAT_RUNNER: &str = r#"import runpy
+const GPT_SOVITS_COMPAT_RUNNER: &str = r#"import json
+import os
+import runpy
 import sys
 from pathlib import Path
 
@@ -54,31 +56,63 @@ import torch
 import yaml
 
 api_arguments = [*sys.argv[2:]]
-if not torch.cuda.is_available():
-    source_config = runtime_root / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
-    cpu_config = Path(__file__).resolve().with_name("gpt-sovits-cpu.yaml")
-    with source_config.open("r", encoding="utf-8") as source:
-        config = yaml.safe_load(source) or {}
-    custom = config.setdefault("custom", dict(config.get("default_v2", {})))
-    custom["device"] = "cpu"
-    custom["is_half"] = False
-    with cpu_config.open("w", encoding="utf-8") as output:
-        yaml.safe_dump(config, output, allow_unicode=True, sort_keys=False)
-    api_arguments.extend(["-c", str(cpu_config)])
-    print("[LUMI to GPT] CUDA를 사용할 수 없어 CPU + FP32 모드로 시작합니다.", flush=True)
+requested_device = os.environ.get("LUMI_GPT_SOVITS_DEVICE_MODE", "auto").lower()
+status_path = Path(os.environ["LUMI_GPT_SOVITS_DEVICE_STATUS"])
+cuda_available = torch.cuda.is_available()
+cuda_error = None
+if cuda_available:
+    try:
+        probe = torch.zeros(1, device="cuda")
+        probe.add_(1)
+        torch.cuda.synchronize()
+        del probe
+    except Exception as error:
+        cuda_available = False
+        cuda_error = f"{type(error).__name__}: {error}"
+
+cuda_failure_reason = "cuda_probe_failed" if cuda_error else "cuda_unavailable"
+
+if requested_device == "cuda" and not cuda_available:
+    status = {"device": "unavailable", "reason": cuda_failure_reason, "ok": False, "error": cuda_error}
+    status_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+    raise RuntimeError("GPU 모드를 선택했지만 PyTorch에서 CUDA를 사용할 수 없습니다.")
+
+selected_device = "cpu" if requested_device == "cpu" or not cuda_available else "cuda"
+reason = "cpu_forced" if requested_device == "cpu" else (cuda_failure_reason if selected_device == "cpu" else ("cuda_forced" if requested_device == "cuda" else "cuda_available"))
+status = {"device": selected_device, "reason": reason, "ok": True, "error": cuda_error}
+status_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+
+source_config = runtime_root / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
+runtime_config = Path(__file__).resolve().with_name("gpt-sovits-runtime.yaml")
+with source_config.open("r", encoding="utf-8") as source:
+    config = yaml.safe_load(source) or {}
+custom = config.setdefault("custom", dict(config.get("default_v2", {})))
+custom["device"] = selected_device
+custom["is_half"] = selected_device == "cuda"
+with runtime_config.open("w", encoding="utf-8") as output:
+    yaml.safe_dump(config, output, allow_unicode=True, sort_keys=False)
+api_arguments.extend(["-c", str(runtime_config)])
+print(f"[LUMI to GPT] {selected_device.upper()} 모드로 시작합니다. ({reason})", flush=True)
 
 from TTS_infer_pack.TextPreprocessor import TextPreprocessor
 
-original_get_phones_and_bert = TextPreprocessor.get_phones_and_bert
+if hasattr(TextPreprocessor, "get_phones_and_bert"):
+    original_get_phones_and_bert = TextPreprocessor.get_phones_and_bert
 
-def get_phones_and_bert(self, text, language, version="v1", final=False):
-    if str(language).lower() in {"ko", "all_ko"} and version == "v1":
-        version = "v2"
-    return original_get_phones_and_bert(self, text, language, version, final)
+    def get_phones_and_bert(self, text, language, version="v1", final=False):
+        if str(language).lower() in {"ko", "all_ko"} and version == "v1":
+            version = "v2"
+        return original_get_phones_and_bert(self, text, language, version, final)
 
-TextPreprocessor.get_phones_and_bert = get_phones_and_bert
+    TextPreprocessor.get_phones_and_bert = get_phones_and_bert
 sys.argv = [str(api_path), *api_arguments]
-runpy.run_path(str(api_path), run_name="__main__")
+try:
+    runpy.run_path(str(api_path), run_name="__main__")
+except Exception as error:
+    status["ok"] = False
+    status["error"] = f"{type(error).__name__}: {error}"
+    status_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+    raise
 "#;
 
 type AppResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -97,6 +131,7 @@ struct Settings {
 struct GptSovitsSettings {
     enabled: bool,
     power_mode: VoicePowerMode,
+    device_mode: VoiceDeviceMode,
     base_url: String,
     runtime_dir: String,
     gpt_weights_path: String,
@@ -117,11 +152,32 @@ enum VoicePowerMode {
     Balanced,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum VoiceDeviceMode {
+    Cuda,
+    Cpu,
+    #[default]
+    #[serde(other)]
+    Auto,
+}
+
+impl VoiceDeviceMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cuda => "cuda",
+            Self::Cpu => "cpu",
+        }
+    }
+}
+
 impl Default for GptSovitsSettings {
     fn default() -> Self {
         Self {
             enabled: false,
             power_mode: VoicePowerMode::Balanced,
+            device_mode: VoiceDeviceMode::Auto,
             base_url: "http://127.0.0.1:9880".to_owned(),
             runtime_dir: String::new(),
             gpt_weights_path: String::new(),
@@ -375,6 +431,12 @@ fn configure_lumi_chat(settings: &Settings) -> AppResult<PathBuf> {
             power_mode.to_owned(),
         ));
     }
+    if property_value(&ai_settings, "tts.gpt_sovits.device_mode").is_none() {
+        updates.push((
+            "tts.gpt_sovits.device_mode".to_owned(),
+            settings.voice.device_mode.as_str().to_owned(),
+        ));
+    }
     if property_value(&ai_settings, "tts.gpt_sovits.speed").is_none() {
         updates.push((
             "tts.gpt_sovits.speed".to_owned(),
@@ -487,6 +549,12 @@ fn gpt_sovits_settings_from_lumi(settings: &Settings) -> GptSovitsSettings {
         Some("ultra_saver") => VoicePowerMode::UltraSaver,
         _ => VoicePowerMode::Balanced,
     };
+    voice.device_mode = match property_value(&ai_settings, "tts.gpt_sovits.device_mode").as_deref()
+    {
+        Some("cuda") => VoiceDeviceMode::Cuda,
+        Some("cpu") => VoiceDeviceMode::Cpu,
+        _ => VoiceDeviceMode::Auto,
+    };
     if let Some(speed) = property_value(&ai_settings, "tts.gpt_sovits.speed")
         .and_then(|value| value.parse::<f32>().ok())
     {
@@ -516,6 +584,7 @@ fn gpt_sovits_configuration(
     let mut voice = GptSovitsSettings {
         enabled: true,
         power_mode: VoicePowerMode::Balanced,
+        device_mode: VoiceDeviceMode::Auto,
         runtime_dir,
         gpt_weights_path,
         sovits_weights_path,
@@ -603,6 +672,10 @@ fn restore_voice_settings_to_lumi(settings: &Settings, voice: &GptSovitsSettings
         (
             "tts.gpt_sovits.power_mode".to_owned(),
             power_mode.to_owned(),
+        ),
+        (
+            "tts.gpt_sovits.device_mode".to_owned(),
+            voice.device_mode.as_str().to_owned(),
         ),
         (
             "tts.gpt_sovits.speed".to_owned(),
@@ -827,6 +900,7 @@ fn write_tts_diagnostic_at(
         "operation": operation,
         "error": error,
         "base_url": voice.base_url,
+        "device_mode": voice.device_mode.as_str(),
         "checks": {
             "server_reachable": gpt_sovits_server_reachable(&voice.base_url),
             "runtime_path": runtime_path,
@@ -865,22 +939,40 @@ struct GptSovitsRuntime {
     api: PathBuf,
 }
 
+fn selected_gpt_sovits_runtime_root_at(data_root: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(data_root.join("gpt-sovits-runtime-selection.json")).ok()?;
+    let selection = serde_json::from_str::<Value>(&text).ok()?;
+    let root = PathBuf::from(selection.get("runtime_root")?.as_str()?);
+    root.is_absolute().then_some(root)
+}
+
 fn resolve_gpt_sovits_runtime(voice: &GptSovitsSettings) -> AppResult<GptSovitsRuntime> {
-    let configured = env::var_os("LUMI_GPT_SOVITS_DIR")
-        .map(PathBuf::from)
+    let data_root = local_data_dir();
+    let environment_root = env::var_os("LUMI_GPT_SOVITS_DIR").map(PathBuf::from);
+    let configured = environment_root
+        .clone()
         .or_else(|| {
             (!voice.runtime_dir.trim().is_empty()).then(|| PathBuf::from(voice.runtime_dir.trim()))
         })
-        .unwrap_or_else(|| local_data_dir().join("gpt-sovits"));
-    let mut roots = vec![configured.clone()];
-    if let Ok(entries) = fs::read_dir(&configured) {
-        roots.extend(
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| path.is_dir()),
-        );
+        .unwrap_or_else(|| data_root.join("gpt-sovits"));
+    let mut roots = Vec::new();
+    if environment_root.is_none() {
+        if let Some(selected) = selected_gpt_sovits_runtime_root_at(&data_root) {
+            roots.push(selected);
+        }
     }
+    roots.push(configured.clone());
+    for parent in roots.clone() {
+        if let Ok(entries) = fs::read_dir(&parent) {
+            roots.extend(
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir()),
+            );
+        }
+    }
+    roots.dedup();
     for root in roots {
         let api = root.join("api_v2.py");
         let python = [
@@ -914,9 +1006,44 @@ fn prepare_gpt_sovits_compat_runner() -> AppResult<PathBuf> {
     Ok(path)
 }
 
+fn gpt_sovits_device_status_path() -> PathBuf {
+    local_data_dir().join("gpt-sovits-device.json")
+}
+
+fn gpt_sovits_device_status() -> (String, String) {
+    let status = fs::read_to_string(gpt_sovits_device_status_path())
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let device = status
+        .as_ref()
+        .and_then(|value| value.get("device"))
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "cuda" | "cpu" | "unavailable"))
+        .unwrap_or("unknown")
+        .to_owned();
+    let reason = status
+        .as_ref()
+        .and_then(|value| value.get("reason"))
+        .and_then(Value::as_str)
+        .filter(|value| {
+            matches!(
+                *value,
+                "cuda_available"
+                    | "cuda_forced"
+                    | "cuda_unavailable"
+                    | "cuda_probe_failed"
+                    | "cpu_forced"
+            )
+        })
+        .unwrap_or("unknown")
+        .to_owned();
+    (device, reason)
+}
+
 struct ManagedGptSovits {
     child: Child,
     base_url: String,
+    device_mode: VoiceDeviceMode,
     last_used: Instant,
 }
 
@@ -960,6 +1087,8 @@ fn spawn_gpt_sovits(voice: &GptSovitsSettings, base_url: &str) -> AppResult<()> 
     }
     let stdout = fs::File::create(&log_path)?;
     let stderr = stdout.try_clone()?;
+    let device_status_path = gpt_sovits_device_status_path();
+    let _ = fs::remove_file(&device_status_path);
     let mut command = Command::new(&runtime.python);
     command
         .arg("-u")
@@ -972,6 +1101,8 @@ fn spawn_gpt_sovits(voice: &GptSovitsSettings, base_url: &str) -> AppResult<()> 
         .current_dir(&runtime.root)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
+        .env("LUMI_GPT_SOVITS_DEVICE_MODE", voice.device_mode.as_str())
+        .env("LUMI_GPT_SOVITS_DEVICE_STATUS", &device_status_path)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -992,6 +1123,7 @@ fn spawn_gpt_sovits(voice: &GptSovitsSettings, base_url: &str) -> AppResult<()> 
         .map_err(|_| "GPT-SoVITS 프로세스 잠금 오류")? = Some(ManagedGptSovits {
         child,
         base_url: base_url.to_owned(),
+        device_mode: voice.device_mode,
         last_used: Instant::now(),
     });
     Ok(())
@@ -1029,14 +1161,25 @@ fn wait_for_gpt_sovits(base_url: &str) -> AppResult<()> {
 fn ensure_gpt_sovits_server(voice: &GptSovitsSettings) -> AppResult<()> {
     let base_url = gpt_sovits_base_url(&voice.base_url)?;
     if gpt_sovits_server_reachable(&base_url) {
-        return Ok(());
+        let managed_mode = managed_gpt_sovits()
+            .lock()
+            .ok()
+            .and_then(|managed| managed.as_ref().map(|process| process.device_mode));
+        if managed_mode.is_none() || managed_mode == Some(voice.device_mode) {
+            return Ok(());
+        }
+        stop_managed_gpt_sovits();
     }
     let reuse_managed = {
         let mut managed = managed_gpt_sovits()
             .lock()
             .map_err(|_| "GPT-SoVITS 프로세스 잠금 오류")?;
         match managed.as_mut() {
-            Some(process) => process.child.try_wait()?.is_none() && process.base_url == base_url,
+            Some(process) => {
+                process.child.try_wait()?.is_none()
+                    && process.base_url == base_url
+                    && process.device_mode == voice.device_mode
+            }
             None => false,
         }
     };
@@ -1233,6 +1376,11 @@ fn gpt_sovits_settings_from_payload(payload: &Value) -> AppResult<GptSovitsSetti
         "ultra_saver" => VoicePowerMode::UltraSaver,
         _ => VoicePowerMode::Balanced,
     };
+    let device_mode = match text("device_mode", "auto").as_str() {
+        "cuda" => VoiceDeviceMode::Cuda,
+        "cpu" => VoiceDeviceMode::Cpu,
+        _ => VoiceDeviceMode::Auto,
+    };
     let speed_factor = payload
         .get("speed_factor")
         .and_then(|value| {
@@ -1244,6 +1392,7 @@ fn gpt_sovits_settings_from_payload(payload: &Value) -> AppResult<GptSovitsSetti
     let voice = GptSovitsSettings {
         enabled: true,
         power_mode,
+        device_mode,
         base_url: text("base_url", "http://127.0.0.1:9880"),
         runtime_dir: text("runtime_dir", ""),
         gpt_weights_path: text("gpt_weights_path", ""),
@@ -1907,11 +2056,26 @@ fn respond_json(request: Request, status: u16, payload: Value) {
     let _ = request.respond(with_common_headers(response, origin.as_deref()));
 }
 
-fn respond_bytes(request: Request, status: u16, content_type: &str, data: Vec<u8>) {
+fn respond_voice_bytes(request: Request, data: Vec<u8>) {
     let origin = allowed_origin(&request);
+    let (device, reason) = gpt_sovits_device_status();
+    let response = Response::from_data(data)
+        .with_status_code(StatusCode(200))
+        .with_header(header("Content-Type", "audio/wav"))
+        .with_header(header("X-Lumi-TTS-Device", &device))
+        .with_header(header("X-Lumi-TTS-Reason", &reason));
+    let _ = request.respond(with_common_headers(response, origin.as_deref()));
+}
+
+fn respond_voice_error(request: Request, status: u16, message: String) {
+    let origin = allowed_origin(&request);
+    let (device, reason) = gpt_sovits_device_status();
+    let data = serde_json::to_vec(&json!({"error":message})).unwrap_or_else(|_| b"{}".to_vec());
     let response = Response::from_data(data)
         .with_status_code(StatusCode(status))
-        .with_header(header("Content-Type", content_type));
+        .with_header(header("Content-Type", "application/json; charset=utf-8"))
+        .with_header(header("X-Lumi-TTS-Device", &device))
+        .with_header(header("X-Lumi-TTS-Reason", &reason));
     let _ = request.respond(with_common_headers(response, origin.as_deref()));
 }
 
@@ -2100,11 +2264,11 @@ fn handle_request(mut request: Request, context: HttpContext) {
                 return;
             }
             match fetch_gpt_sovits_wav(&voice, text) {
-                Ok(wav) => respond_bytes(request, 200, "audio/wav", wav),
+                Ok(wav) => respond_voice_bytes(request, wav),
                 Err(error) => {
                     let message =
                         tts_failure_response(&voice, "voice_synthesis", &error.to_string());
-                    respond_json(request, 502, json!({"error":message}));
+                    respond_voice_error(request, 502, message);
                 }
             }
         }
@@ -2561,11 +2725,20 @@ mod tests {
     }
 
     #[test]
-    fn gpt_sovits_runner_falls_back_to_cpu_without_cuda() {
+    fn gpt_sovits_runner_selects_cuda_or_cpu_without_changing_vendor_config() {
         assert!(GPT_SOVITS_COMPAT_RUNNER.contains("torch.cuda.is_available()"));
-        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("custom[\"device\"] = \"cpu\""));
-        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("custom[\"is_half\"] = False"));
-        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("gpt-sovits-cpu.yaml"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("torch.cuda.synchronize()"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("cuda_probe_failed"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("LUMI_GPT_SOVITS_DEVICE_MODE"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("selected_device = \"cpu\""));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("custom[\"device\"] = selected_device"));
+        assert!(
+            GPT_SOVITS_COMPAT_RUNNER.contains("custom[\"is_half\"] = selected_device == \"cuda\"")
+        );
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("gpt-sovits-runtime.yaml"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER.contains("cuda_unavailable"));
+        assert!(GPT_SOVITS_COMPAT_RUNNER
+            .contains("if hasattr(TextPreprocessor, \"get_phones_and_bert\")"));
         assert!(GPT_SOVITS_COMPAT_RUNNER.contains("api_arguments.extend([\"-c\""));
     }
 
@@ -2667,6 +2840,7 @@ mod tests {
         assert!(updated.contains("llm.model.gpt_web=gpt-5.6-luna"));
         assert!(updated.contains("chatter.enabled=false"));
         assert!(updated.contains("screenwatch.enabled=false"));
+        assert!(updated.contains("tts.gpt_sovits.device_mode=auto"));
         assert_eq!(
             fs::read_to_string(ai_settings.with_extension("properties.lumi-to-gpt.bak")).unwrap(),
             original
@@ -2694,6 +2868,7 @@ mod tests {
             voice: GptSovitsSettings {
                 enabled: true,
                 power_mode: VoicePowerMode::UltraSaver,
+                device_mode: VoiceDeviceMode::Cpu,
                 runtime_dir: "runtime-folder".to_owned(),
                 gpt_weights_path: "lumi.ckpt".to_owned(),
                 sovits_weights_path: "lumi.pth".to_owned(),
@@ -2725,6 +2900,10 @@ mod tests {
             Some("ultra_saver")
         );
         assert_eq!(
+            property_value(&ai_settings, "tts.gpt_sovits.device_mode").as_deref(),
+            Some("cpu")
+        );
+        assert_eq!(
             property_value(&ai_settings, "chatter.enabled").as_deref(),
             Some("true")
         );
@@ -2753,6 +2932,7 @@ mod tests {
                 "tts.gpt_sovits.text_language=ko\n",
                 "tts.gpt_sovits.prompt_language=ko\n",
                 "tts.gpt_sovits.power_mode=balanced\n",
+                "tts.gpt_sovits.device_mode=cpu\n",
                 "tts.gpt_sovits.speed=0.9\n"
             ),
         )
@@ -2775,6 +2955,7 @@ mod tests {
         assert_eq!(settings.voice.runtime_dir, "new-runtime");
         assert_eq!(settings.voice.gpt_weights_path, "new.ckpt");
         assert_eq!(settings.voice.prompt_text, "새 참조 대사");
+        assert_eq!(settings.voice.device_mode, VoiceDeviceMode::Cpu);
         assert!((settings.voice.speed_factor - 0.9).abs() < f32::EPSILON);
         fs::remove_dir_all(root).unwrap();
     }
@@ -2796,6 +2977,7 @@ mod tests {
                 "tts.gpt_sovits.runtime=C\\:\\\\Lumi\\u0020Voice\n",
                 "tts.gpt_sovits.reference_text=\\ub098\\ub294 \\ub8e8\\ubbf8\\uc608\\uc694\n",
                 "tts.gpt_sovits.power_mode=ultra_saver\n",
+                "tts.gpt_sovits.device_mode=cuda\n",
                 "tts.gpt_sovits.speed=1.15\n"
             ),
         )
@@ -2811,6 +2993,7 @@ mod tests {
         assert_eq!(voice.runtime_dir, r"C:\Lumi Voice");
         assert_eq!(voice.prompt_text, "나는 루미예요");
         assert_eq!(voice.power_mode, VoicePowerMode::UltraSaver);
+        assert_eq!(voice.device_mode, VoiceDeviceMode::Cuda);
         assert!((voice.speed_factor - 1.15).abs() < f32::EPSILON);
         fs::remove_dir_all(root).unwrap();
     }
@@ -2823,6 +3006,7 @@ mod tests {
             "prompt_text": "참조 WAV에서 말한 문장",
             "text_language": "ko",
             "prompt_language": "ko",
+            "device_mode": "cpu",
             "speed_factor": "1.0"
         });
 
@@ -2830,6 +3014,7 @@ mod tests {
 
         assert_eq!(payload["text"], "GPT가 실제로 답한 문장");
         assert_eq!(voice.prompt_text, "참조 WAV에서 말한 문장");
+        assert_eq!(voice.device_mode, VoiceDeviceMode::Cpu);
     }
 
     #[test]
@@ -2863,6 +3048,30 @@ mod tests {
         assert_eq!(runtime.root, package);
         assert!(runtime.python.ends_with(r"runtime\python.exe"));
         assert!(runtime.api.ends_with("api_v2.py"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn gpt_sovits_reads_installer_selected_runtime() {
+        let root =
+            env::temp_dir().join(format!("gpt-sovits-selection-{}", Uuid::new_v4().simple()));
+        let package = root
+            .join("gpt-sovits")
+            .join("runtimes")
+            .join("v2-cu128-blackwell");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            root.join("gpt-sovits-runtime-selection.json"),
+            serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "runtime_id": "v2-cu128-blackwell",
+                "runtime_root": package
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(selected_gpt_sovits_runtime_root_at(&root), Some(package));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2948,6 +3157,7 @@ mod tests {
         let old_settings: GptSovitsSettings =
             serde_json::from_value(json!({"enabled":true})).unwrap();
         assert_eq!(old_settings.power_mode, VoicePowerMode::Balanced);
+        assert_eq!(old_settings.device_mode, VoiceDeviceMode::Auto);
     }
 
     #[test]

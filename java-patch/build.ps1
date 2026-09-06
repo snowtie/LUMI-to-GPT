@@ -15,7 +15,7 @@ $ClassesRoot = Join-Path $BuildRoot "classes"
 $PatchJar = Join-Path $PatchRoot "lumi-to-gpt-little-lumi-patch.jar"
 $MarkerPath = Join-Path $PatchRoot "META-INF\lumi-to-gpt-patch.properties"
 $HashPath = Join-Path $PatchRoot "original-class-sha256.json"
-$Version = "1.0.8"
+$Version = "1.0.9"
 
 foreach ($required in @($BaseJar, $Javac, $JarTool)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {

@@ -268,6 +268,11 @@ public final class AiSettings {
         return this.get("tts.gpt_sovits.power_mode", "balanced");
     }
 
+    public String gptSovitsDeviceMode() {
+        String string = this.get("tts.gpt_sovits.device_mode", "auto");
+        return "cuda".equals(string) || "cpu".equals(string) ? string : "auto";
+    }
+
     public String gptSovitsSpeed() {
         return this.get("tts.gpt_sovits.speed", "1.0");
     }

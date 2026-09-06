@@ -39,13 +39,17 @@ OpenAI API 키, Python, 브라우저 확장 프로그램은 필요하지 않습�
 
 2번이나 3번은 대용량 압축 해제와 가중치 준비 중 한동안 새 출력이 없을 수 있습니다. `설치 완료` 메시지가 나올 때까지 CMD 창을 닫지 마세요.
 
-GPT-SoVITS는 CUDA를 사용할 수 있으면 GPU로 실행하고, CUDA를 사용할 수 없는 PC에서는 자동으로 CPU + FP32 모드로 전환합니다. CPU 모드는 첫 실행과 음성 생성이 상당히 느릴 수 있습니다.
+설치기는 Steam의 보조 라이브러리까지 자동으로 검색합니다. 그래도 Little LUMI를 찾지 못하면 Steam에서 `관리 → 로컬 파일 탐색`을 누르고 표시된 `Little LUMI` 또는 `app` 폴더 경로를 설치 창에 붙여넣으면 됩니다.
+
+GPT-SoVITS의 `TTS 장치` 기본값은 `자동`입니다. 설치기가 NVIDIA GPU 세대를 확인해 RTX 50 계열에는 CUDA 12.8 통합판을, 기존 GPU와 GPU가 없는 PC에는 CUDA 11.8 통합판을 설치합니다. 실행할 때 실제 CUDA 연산까지 확인하고 실패하면 같은 통합판에서 CPU + FP32로 전환합니다. 실제 사용 장치와 전환 이유는 미리듣기 뒤에 표시됩니다. 문제가 있을 때만 `GPU (CUDA)` 또는 `CPU (호환성)`로 강제하세요. CPU 모드는 첫 실행과 음성 생성이 상당히 느릴 수 있습니다.
+
+지원 런타임 목록은 앱 버전과 분리된 `tts-runtimes.json`으로 관리됩니다. 설치할 때 최신 목록을 확인하므로 새로운 GPU용 공식 통합판은 앱 버전을 올리지 않고도 추가할 수 있으며, 네트워크 확인에 실패하면 ZIP에 포함된 목록을 사용합니다. PC마다 필요한 통합판 하나만 내려받습니다.
 
 설치 과정은 `%LOCALAPPDATA%\LumiToGPT\logs`에 단계별 로그를 남깁니다. 실패하면 콘솔에 실패 단계, 오류 종류, 발생 위치와 정확한 로그 파일 경로가 표시됩니다.
 
 TTS에서 HTTP 502가 발생하면 실제 GPT-SoVITS 오류 응답과 런타임·가중치·참조 WAV 확인 결과를 `%LOCALAPPDATA%\LumiToGPT\logs\tts-last-error.log`에 자동으로 남깁니다.
 
-설치기는 OpenAI의 공식 Codex App Server Windows x64 압축본 약 75MB를 내려받아 해시를 확인합니다. TTS 모드는 추가로 약 5.7GB인 [공식 GPT-SoVITS v2 Windows 통합판](https://huggingface.co/lj1995/GPT-SoVITS-windows-package/blob/main/GPT-SoVITS-v2-240821.7z)과 배포 허가를 받은 약 420MB의 `GPT_weights_v2.7z`를 내려받습니다. 음성 가중치는 v0.9.0 GitHub Release의 별도 자산으로 유지되며 자세한 범위는 [VOICE_MODEL_NOTICE.txt](VOICE_MODEL_NOTICE.txt)를 따릅니다.
+설치기는 OpenAI의 공식 Codex App Server Windows x64 압축본 약 75MB를 내려받아 해시를 확인합니다. TTS 모드는 GPU에 따라 약 5.7GB인 [공식 GPT-SoVITS v2 Windows 통합판](https://huggingface.co/lj1995/GPT-SoVITS-windows-package/blob/main/GPT-SoVITS-v2-240821.7z) 또는 약 8.84GB인 [RTX 50 계열용 공식 통합판](https://huggingface.co/lj1995/GPT-SoVITS-windows-package/blob/main/GPT-SoVITS-v2pro-20250604-nvidia50.7z) 하나와 배포 허가를 받은 약 420MB의 `GPT_weights_v2.7z`를 내려받습니다. 모든 다운로드는 SHA-256을 확인합니다. 음성 가중치는 v0.9.0 GitHub Release의 별도 자산으로 유지되며 자세한 범위는 [VOICE_MODEL_NOTICE.txt](VOICE_MODEL_NOTICE.txt)를 따릅니다.
 
 ChatGPT OAuth 정보와 애드온 설정은 `%LOCALAPPDATA%\LumiToGPT`에 분리해 저장합니다. ChatGPT 페이지의 DOM이나 비공개 웹 API는 사용하지 않습니다.
 
@@ -83,4 +87,4 @@ python .\tests\smoke_release.py
 
 소스 코드는 BSD 3-Clause로 공개합니다. Little LUMI, Shimeji-ee와 Codex 구성요소의 원저작권·라이선스는 [NOTICE.txt](NOTICE.txt)에 따릅니다.
 
-배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.8-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.
+배포 ZIP과 창작마당 업로드 폴더는 각각 `release\LUMI-to-GPT-v1.0.9-windows-x64.zip`, `release\workshop-content`에 생성됩니다. Steam 항목의 필요 항목에는 `LUMI Chat` Workshop ID `3794360578`을 지정해야 합니다.

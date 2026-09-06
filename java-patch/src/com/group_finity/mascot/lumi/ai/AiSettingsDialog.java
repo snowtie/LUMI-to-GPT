@@ -112,6 +112,8 @@ extends JDialog {
     private final JTextField gptSovitsTextLanguage = new JTextField(8);
     private final JTextField gptSovitsPromptLanguage = new JTextField(8);
     private final JComboBox<String> gptSovitsPowerMode = new JComboBox<String>(new String[]{"balanced", "ultra_saver"});
+    private final JComboBox<String> gptSovitsDeviceMode = new JComboBox<String>(new String[]{"\uc790\ub3d9 (\uad8c\uc7a5)", "GPU (CUDA)", "CPU (\ud638\ud658\uc131)"});
+    private final JTextField gptSovitsDeviceStatus = new JTextField(24);
     private final JTextField gptSovitsSpeed = new JTextField(8);
     private final JCheckBox externalLines = new JCheckBox(SpeechDirector.localized("AiExternalLines", "\uc0ac\uc774\ub4dc\uce74 \ub300\uc0ac(say.txt)\ub3c4 \uc74c\uc131\uc73c\ub85c \uc77d\uae30"));
     private final JCheckBox ttsSave = new JCheckBox(SpeechDirector.localized("AiTtsSave", "\ub9d0\ud55c \ub300\uc0ac\ub97c wav\ub85c \uc800\uc7a5"));
@@ -297,6 +299,9 @@ extends JDialog {
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "\ucc38\uc870 \uc74c\uc131\uc758 \ub300\uc0ac", this.gptSovitsReferenceText);
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "\ubcf8\ubb38 \uc5b8\uc5b4", this.gptSovitsTextLanguage);
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "\ucc38\uc870 \uc5b8\uc5b4", this.gptSovitsPromptLanguage);
+        n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "TTS \uc7a5\uce58", this.gptSovitsDeviceMode);
+        this.gptSovitsDeviceStatus.setEditable(false);
+        n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "\ud604\uc7ac \uc0ac\uc6a9 \uc7a5\uce58", this.gptSovitsDeviceStatus);
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "\uc74c\uc131 \ub300\uae30 \ubaa8\ub4dc", this.gptSovitsPowerMode);
         n = AiSettingsDialog.addRow(jPanel, gridBagConstraints, n, "\ub9d0\ud558\uae30 \uc18d\ub3c4", this.gptSovitsSpeed);
         JPanel jPanel5 = ((Page)jPanel).lastHolder();
@@ -320,6 +325,8 @@ extends JDialog {
         this.elevenKey.setToolTipText(SpeechDirector.localized("AiElevenKeyHint", "ElevenLabs \uacc4\uc815 \uc124\uc815\uc5d0\uc11c \ubc1c\uae09\ubc1b\ub294 \ud0a4\uc785\ub2c8\ub2e4."));
         this.elevenVoice.setToolTipText(SpeechDirector.localized("AiElevenVoiceHint", "ElevenLabs\uc5d0\uc11c \ubaa9\uc18c\ub9ac \ud558\ub098\ub97c \uac00\ub9ac\ud0a4\ub294 ID\uc785\ub2c8\ub2e4. \ubcf4\uad00\ud568(Voice Library)\uc5d0\uc11c \ubaa9\uc18c\ub9ac\ub97c \uace0\ub974\uba74 \ud655\uc778\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4."));
         this.elevenModel.setToolTipText(SpeechDirector.localized("AiElevenModelHint", "ElevenLabs\uc758 \ud569\uc131 \ubaa8\ub378 \uc774\ub984\uc785\ub2c8\ub2e4. \uc798 \ubaa8\ub974\uaca0\uc73c\uba74 \uae30\ubcf8\uac12\uc744 \uadf8\ub300\ub85c \ub450\uc138\uc694."));
+        this.gptSovitsDeviceMode.setToolTipText("\uc790\ub3d9\uc740 \uc2e4\ud589\ud560 \ub54c CUDA\ub97c \ub2e4\uc2dc \ud655\uc778\ud558\uace0, \uc0ac\uc6a9\ud560 \uc218 \uc5c6\uc73c\uba74 CPU + FP32\ub85c \uc804\ud658\ud569\ub2c8\ub2e4.");
+        this.gptSovitsDeviceStatus.setToolTipText("\ubbf8\ub9ac\ub4e3\uae30\ub098 \ub300\ud654 \uc74c\uc131\uc744 \ud569\uc131\ud55c \ub4a4 \uc2e4\uc81c\ub85c \uc0ac\uc6a9\ud55c \uc7a5\uce58\uac00 \ud45c\uc2dc\ub429\ub2c8\ub2e4.");
         this.externalLines.setToolTipText(SpeechDirector.localized("AiExternalLinesHint", "\ub2e4\ub978 \ud504\ub85c\uadf8\ub7a8\uc774\ub098 Claude Code\uac00 speech/say.txt\ub85c \ubcf4\ub0b8 \ub300\uc0ac\uae4c\uc9c0 \uc18c\ub9ac\ub85c \uc77d\uc2b5\ub2c8\ub2e4. \ub300\ud654 \ub2f5\ubcc0\uc740 \uc774 \uccb4\ud06c\uc640 \uc0c1\uad00\uc5c6\uc774 \ud56d\uc0c1 \uc77d\uc2b5\ub2c8\ub2e4."));
         this.ttsSave.setToolTipText(SpeechDirector.localized("AiTtsSaveHint", "\ub8e8\ubbf8\uac00 \ub9d0\ud55c \ub300\uc0ac\ub97c speech/voice \ud3f4\ub354\uc5d0 wav \ud30c\uc77c\ub85c \ub0a8\uae41\ub2c8\ub2e4. \uc790\ub3d9\uc73c\ub85c \uc9c0\uc6b0\uc9c0 \uc54a\uc73c\ubbc0\ub85c \uac00\ub054 \uc9c1\uc811 \uc815\ub9ac\ud574\uc57c \ud569\ub2c8\ub2e4."));
         n = AiSettingsDialog.toggleRow(jPanel, gridBagConstraints, n, this.externalLines, this.externalLines, null);
@@ -620,6 +627,12 @@ extends JDialog {
         this.gptSovitsTextLanguage.setText(aiSettings.gptSovitsTextLanguage());
         this.gptSovitsPromptLanguage.setText(aiSettings.gptSovitsPromptLanguage());
         this.gptSovitsPowerMode.setSelectedItem(aiSettings.gptSovitsPowerMode());
+        this.gptSovitsDeviceMode.setSelectedIndex(switch (aiSettings.gptSovitsDeviceMode()) {
+            case "cuda" -> 1;
+            case "cpu" -> 2;
+            default -> 0;
+        });
+        this.gptSovitsDeviceStatus.setText(TtsClient.gptSovitsDeviceStatus());
         this.gptSovitsSpeed.setText(aiSettings.gptSovitsSpeed());
         this.externalLines.setSelected(aiSettings.ttsExternalLines());
         this.ttsSave.setSelected(aiSettings.ttsSave());
@@ -731,6 +744,11 @@ extends JDialog {
         aiSettings.set("tts.gpt_sovits.text_language", this.gptSovitsTextLanguage.getText());
         aiSettings.set("tts.gpt_sovits.prompt_language", this.gptSovitsPromptLanguage.getText());
         aiSettings.set("tts.gpt_sovits.power_mode", String.valueOf(this.gptSovitsPowerMode.getSelectedItem()));
+        aiSettings.set("tts.gpt_sovits.device_mode", switch (this.gptSovitsDeviceMode.getSelectedIndex()) {
+            case 1 -> "cuda";
+            case 2 -> "cpu";
+            default -> "auto";
+        });
         aiSettings.set("tts.gpt_sovits.speed", this.gptSovitsSpeed.getText());
         aiSettings.set("tts.externalLines", String.valueOf(this.externalLines.isSelected()));
         aiSettings.set("tts.save", String.valueOf(this.ttsSave.isSelected()));
@@ -793,11 +811,19 @@ extends JDialog {
                 TtsClient.Audio audio = TtsClient.synthesize((String)AiSettingsDialog.format("AiPreviewLine", "\uc548\ub155\ud558\uc138\uc694, %s\uc608\uc694! \uc2dc\uc2a4\ud15c \uc0c1\ud0dc \uc591\ud638\ud574\uc694.", string), (String)string);
                 ChatService.clearTtsError();
                 TtsPlayer.play((TtsClient.Audio)audio, null, null);
-                AiSettingsDialog.onUi(() -> this.setStatus(this.ttsEnabled.isSelected() ? AiSettingsDialog.format("AiStatusPlaying", "\uc7ac\uc0dd \uc911 (%s\ucd08)", (double)audio.millis() / 1000.0) : AiSettingsDialog.localizedPlayingMuted(), !this.ttsEnabled.isSelected()));
+                String string2 = TtsClient.gptSovitsDeviceStatus();
+                AiSettingsDialog.onUi(() -> {
+                    this.gptSovitsDeviceStatus.setText(string2);
+                    this.setStatus(this.ttsEnabled.isSelected() ? AiSettingsDialog.format("AiStatusPlaying", "\uc7ac\uc0dd \uc911 (%s\ucd08)", (double)audio.millis() / 1000.0) : AiSettingsDialog.localizedPlayingMuted(), !this.ttsEnabled.isSelected());
+                });
             }
             catch (Exception exception) {
                 ChatService.noteTtsFailure((String)"preview", (Exception)exception);
-                AiSettingsDialog.onUi(() -> this.setStatus(AiSettingsDialog.format("AiStatusPreviewFailed", "\ubbf8\ub9ac\ub4e3\uae30 \uc2e4\ud328: %s", AiSettingsDialog.errorMessage(exception)), true));
+                String string2 = TtsClient.gptSovitsDeviceStatus();
+                AiSettingsDialog.onUi(() -> {
+                    this.gptSovitsDeviceStatus.setText(string2);
+                    this.setStatus(AiSettingsDialog.format("AiStatusPreviewFailed", "\ubbf8\ub9ac\ub4e3\uae30 \uc2e4\ud328: %s", AiSettingsDialog.errorMessage(exception)), true);
+                });
             }
         });
     }

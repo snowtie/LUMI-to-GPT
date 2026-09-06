@@ -21,6 +21,7 @@ import javax.sound.sampled.AudioSystem;
 
 public final class TtsClient {
     private static final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10L)).build();
+    private static volatile String lastGptSovitsDeviceStatus = "미리듣기로 확인";
 
     private TtsClient() {
     }
@@ -61,6 +62,7 @@ public final class TtsClient {
         linkedHashMap.put("text_language", aiSettings.gptSovitsTextLanguage());
         linkedHashMap.put("prompt_language", aiSettings.gptSovitsPromptLanguage());
         linkedHashMap.put("power_mode", aiSettings.gptSovitsPowerMode());
+        linkedHashMap.put("device_mode", aiSettings.gptSovitsDeviceMode());
         linkedHashMap.put("speed_factor", aiSettings.gptSovitsSpeed());
         String string3 = aiSettings.llmBaseFor("gpt_web");
         AiSettings.ensureGptWebBridgeReady(string3);
@@ -70,7 +72,8 @@ public final class TtsClient {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(MiniJson.write(linkedHashMap), StandardCharsets.UTF_8))
                 .build();
-        return TtsClient.wavAudio(TtsClient.send(httpRequest));
+        HttpResponse<byte[]> httpResponse = TtsClient.sendResponse(httpRequest);
+        return TtsClient.wavAudio(httpResponse.body());
     }
 
     private static Audio fish(AiSettings aiSettings, String string, String string2) throws Exception {
@@ -115,7 +118,12 @@ public final class TtsClient {
     }
 
     private static byte[] send(HttpRequest httpRequest) throws Exception {
+        return TtsClient.sendResponse(httpRequest).body();
+    }
+
+    private static HttpResponse<byte[]> sendResponse(HttpRequest httpRequest) throws Exception {
         HttpResponse<byte[]> httpResponse = http.send(httpRequest, HttpResponse.BodyHandlers.ofByteArray());
+        TtsClient.updateGptSovitsDeviceStatus(httpResponse);
         if (httpResponse.statusCode() / 100 != 2) {
             String string = new String(httpResponse.body(), StandardCharsets.UTF_8);
             if (string.length() > 300) {
@@ -123,7 +131,27 @@ public final class TtsClient {
             }
             throw new IllegalStateException("TTS HTTP " + httpResponse.statusCode() + ": " + string);
         }
-        return httpResponse.body();
+        return httpResponse;
+    }
+
+    private static void updateGptSovitsDeviceStatus(HttpResponse<?> httpResponse) {
+        String string = httpResponse.headers().firstValue("X-Lumi-TTS-Device").orElse(null);
+        if (string == null) {
+            return;
+        }
+        String string2 = httpResponse.headers().firstValue("X-Lumi-TTS-Reason").orElse("unknown");
+        lastGptSovitsDeviceStatus = switch (string2) {
+            case "cuda_available" -> "GPU (CUDA + FP16 자동 감지)";
+            case "cuda_forced" -> "GPU (CUDA + FP16 강제)";
+            case "cuda_unavailable" -> "CPU (CUDA를 사용할 수 없어 자동 전환)";
+            case "cuda_probe_failed" -> "CPU (CUDA 호환 검사 실패로 자동 전환)";
+            case "cpu_forced" -> "CPU (호환성 모드)";
+            default -> "unavailable".equals(string) ? "GPU 사용 불가" : "장치 확인 불가";
+        };
+    }
+
+    public static String gptSovitsDeviceStatus() {
+        return lastGptSovitsDeviceStatus;
     }
 
     private static Audio pcmAudio(byte[] byArray, int n) {
